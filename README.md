@@ -1,166 +1,271 @@
 # QueueSense – Smart Queue Intelligence System
 
-QueueSense is an AI-powered computer vision system designed to monitor, track, analyze, and optimize physical queues in real time. It detects individuals, tracks their movement across user-defined polygon Regions of Interest (ROIs), calculates wait times, triggers overcrowding alerts, and provides a sleek live analytics dashboard.
+## Overview
+QueueSense monitors physical queues using a YOLO-powered camera feed, tracks
+occupancy in real time, stores history in SQLite, and integrates with an Arduino
+Uno for RFID attendance and buzzer alerts.
 
 ---
 
-## 🚀 Key Features
-
-- **Multi-Source Vision Pipeline**:
-  - Prerecorded video files (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm` from `videos/` folder)
-  - Built-in laptop camera
-  - External USB webcam with automated camera index scanning (0–4)
-- **Computer Vision & Tracking**:
-  - Person detection powered by YOLO (nano model, class 0)
-  - Multi-object tracking with **ByteTrack** for persistent track IDs
-  - Multi-anchor polygon containment test for accurate queue assignment
-- **Queue Analytics & Metrics**:
-  - Live occupancy count per queue
-  - Entry and exit event detection with time confirmation
-  - Elapsed and estimated waiting time calculations (25s baseline / person)
-  - Optimal queue recommendation banner
-- **Persistent Storage & History**:
-  - SQLite database (`queuesense.db`) with current status and historical snapshots
-  - Video fingerprinting (SHA-256) and unique session tracking
-  - Throttled database writes for high performance and low disk latency
-- **Modern Web Dashboard**:
-  - Dark glassmorphism UI with responsive multi-column queue cards
-  - Real-time MJPEG live stream with sub-second latency
-  - Interactive multi-line history charts with Chart.js
-  - Overcrowding visual badge and Web Audio API alerts
-  - Session and video historical record filters
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
-QueueSense/
-├── app.py                  # Flask dashboard server & REST API (PORT 5000)
-├── database.py             # SQLite helper (schema, status & history operations)
-├── monitor.py              # Main monitoring script (YOLO + ByteTrack + ROI + DB)
-├── requirements.txt        # Python package dependencies
-├── README.md               # Project documentation & run guide
-├── yolo26n.pt              # YOLO model weights
-├── queuesense.db           # SQLite database
-├── src/
-│   └── queue_manager.py    # QueueManager logic (occupancy, entry/exit, timers)
-├── templates/
-│   └── index.html          # Dashboard HTML template (single-page app)
-├── static/
-│   ├── style.css           # Dashboard CSS design system
-│   └── live_frame.jpg      # Live camera frame shared buffer
-├── videos/                 # Prerecorded sample video files
-└── tests/
-    ├── test_video.py       # Diagnostic script for YOLO & ByteTrack verification
-    └── test_usb_webcam.py  # Diagnostic tool to scan and test connected cameras
+D:\QueueSense\
+│
+├── app.py                     # Flask web server + all API routes
+├── database.py                # SQLite schema, migrations, all DB functions
+├── arduino_queue_bridge.py    # USB serial owner: buzzer control + RFID parsing
+├── monitor.py                 # YOLO + ByteTrack vision monitor (run separately)
+│
+├── arduino\
+│   └── QueueSense_RFID.ino    # Arduino Uno firmware (RC522 RFID + 16x2 I2C LCD + Buzzer + LED)
+│
+├── src\
+│   └── queue_manager.py       # Queue occupancy / entry / exit logic
+│
+├── tests\
+│   ├── test_queuesense_phase3.py  # Full Phase 3 test suite (99 tests)
+│   ├── test_queuesense_phase5.py  # Full Phase 5 hardware integration test suite (65 tests)
+│   ├── test_usb_webcam.py         # Camera diagnostic tool
+│   └── test_video.py              # Video playback test
+│
+├── templates\
+│   └── index.html             # Dashboard HTML (RFID section, alert limits, live feed)
+│
+├── static\
+│   ├── style.css              # Dashboard CSS (Arduino/RFID additions)
+│   └── live_frame.jpg         # Written by monitor.py, read by Flask video stream
+│
+├── videos\                    # Place your video files here
+├── yolo26n.pt                 # YOLO model weights
+├── queuesense.db              # SQLite database (DO NOT DELETE)
+└── requirements.txt           # Python dependencies
 ```
 
 ---
 
-## 🛠️ Setup & Installation
+## Database Tables
 
-### 1. Prerequisites
-- Python 3.10+
-- (Optional) NVIDIA GPU with CUDA 12.8 support for hardware-accelerated inference
+| Table | Purpose |
+|---|---|
+| `queue_status` | Current occupancy for each monitored queue |
+| `queue_history` | Historical snapshots (preserved across restarts) |
+| `queue_alert_limits` | Per-queue buzzer trigger thresholds |
+| `attendance_events` | RFID scan records (separate from queue data) |
 
-### 2. Activate Virtual Environment
+---
+
+## Installation
+
+### Step 1 – Install Python dependencies
+
 ```powershell
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
+cd D:\QueueSense
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-### 3. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-> **Note for CUDA GPU acceleration**:
-> If you have a supported NVIDIA GPU, install PyTorch with CUDA:
-> ```bash
-> pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-> ```
-
----
-
-## 🚦 How to Run the Project
-
-QueueSense runs in two decoupled processes for high reliability and responsiveness:
-
-### Step 1: Start the Dashboard Server (Terminal 1)
+For GPU acceleration (CUDA 12.8):
 ```powershell
-python app.py
+.\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
 ```
-- Starts the Flask server at **`http://127.0.0.1:5000`**.
-- Open your browser and navigate to `http://127.0.0.1:5000`.
 
-### Step 2: Start QueueSense Monitor (Terminal 2)
+### Step 2 – Verify imports
+
 ```powershell
-python monitor.py
+.\.venv\Scripts\python.exe -c "import database; import arduino_queue_bridge; import app; print('All imports OK')"
 ```
 
-1. **Select Input Source**:
-   - `1`: Prerecorded video (select from listed files in `videos/`)
-   - `2`: Laptop built-in camera
-   - `3`: External USB webcam (automatically scans and lists available cameras)
-2. **Select Number of Queues**:
-   - Choose 1, 2, or 3 queues to monitor.
-3. **Draw Polygon ROIs** on the first video frame:
-   - **Left Click**: Add a corner point.
-   - **Near First Point**: Close the polygon.
-   - **Right Click / Z**: Undo last corner point.
-   - **C / R**: Clear and redraw current polygon.
-   - **Enter**: Confirm the closed polygon.
-   - **Q**: Cancel.
-4. **Monitoring Runs**:
-   - Live OpenCV window displays tracking boxes, IDs, and occupancy statistics.
-   - Live stream updates on the dashboard at `http://127.0.0.1:5000`.
-   - Press **`Q`** in the OpenCV window to stop monitoring cleanly.
+### Step 3 – Run the integration test suites
+
+```powershell
+# Phase 3 core test suite (99 tests)
+.\.venv\Scripts\python.exe tests\test_queuesense_phase3.py
+
+# Phase 5 Arduino & hardware protocol test suite (65 tests)
+.\.venv\Scripts\python.exe tests\test_queuesense_phase5.py
+```
+
+Expected output: `Total: 164  Passed: 164  Failed: 0`
 
 ---
 
-## 🔍 Diagnostic & Testing Tools
+## Running the System
 
-QueueSense includes diagnostic utilities in the `tests/` folder:
+**Always start the Flask dashboard FIRST, then the monitor in a second window.**
 
-1. **Test USB Webcam / Connected Cameras**:
-   ```powershell
-   python tests/test_usb_webcam.py
-   ```
-   Scans camera indices 0 to 4, displays detected resolutions, and opens a test stream with FPS counter.
+### Window 1 – Flask dashboard
 
-2. **Test YOLO Person Detection & ByteTrack**:
-   ```powershell
-   python tests/test_video.py
-   ```
-   Verifies that YOLO and ByteTrack operate properly on sample video files.
+```powershell
+cd D:\QueueSense
+
+# Optional: override Arduino COM port (auto-detects if omitted)
+# $env:QUEUESENSE_ARDUINO_PORT = 'COM5'
+
+.\.venv\Scripts\python.exe app.py
+```
+
+Open **http://127.0.0.1:5000** in your browser.
+
+### Window 2 – Queue monitor (YOLO + video)
+
+```powershell
+cd D:\QueueSense
+.\.venv\Scripts\python.exe monitor.py
+```
+
+Follow the on-screen prompts to select a video and draw ROI polygons.
 
 ---
 
-## 🌐 REST API Endpoints
+## Arduino Hardware Integration
 
-The Flask server (`app.py`) provides the following endpoints:
+### Arduino Firmware Location
+The Arduino sketch is located at [`arduino/QueueSense_RFID.ino`](file:///D:/QueueSense/arduino/QueueSense_RFID.ino).
 
-| Endpoint | Method | Description |
+### Pin Wiring
+
+| Component | Pin | Arduino Uno Connection |
 |---|---|---|
-| `/` | `GET` | Main QueueSense live dashboard |
-| `/video_feed` | `GET` | MJPEG video stream of the live monitoring frame |
-| `/api/stats` | `GET` | Current queue statistics, wait times, and recommended queue |
-| `/api/history` | `GET` | Historical records with optional query params (`video_hash`, `session_id`, `queue_name`, `limit`) |
-| `/api/history/summary` | `GET` | Aggregated statistics (total entries, exits, avg wait) |
-| `/api/history/videos` | `GET` | Distinct recorded video sources |
-| `/api/history/sessions` | `GET` | Sessions recorded for a specific video |
+| **RC522 RFID** | VCC | **3.3V** (Do NOT connect to 5V!) |
+| | RST | Pin 9 |
+| | GND | GND |
+| | MISO | Pin 12 |
+| | MOSI | Pin 11 |
+| | SCK | Pin 13 |
+| | SDA (SS) | Pin 10 |
+| **I2C 16x2 LCD** | VCC | 5V |
+| | GND | GND |
+| | SDA | A4 (or dedicated SDA pin) |
+| | SCL | A5 (or dedicated SCL pin) |
+| | *Address* | Default `0x27` (or `0x3F`). Adjust contrast potentiometer if blank. |
+| **Buzzer** | (+) | Pin 2 (Active buzzer) |
+| | (-) | GND |
+| **LED** | Anode (+) | Pin 3 (through 220–330Ω resistor) |
+| | Cathode (-) | GND |
+
+### Required Arduino Libraries (Install via Arduino IDE Library Manager)
+1. **MFRC522** by GithubCommunity
+2. **LiquidCrystal_I2C** by Frank de Brabander
+
+### Confirmed Serial Protocol (9600 Baud)
+
+#### Arduino → Python:
+- `QUEUESENSE_READY` — sent once when Arduino completes `setup()`
+- `RFID,<uid>,<roll>,<name>,ENTRY` — known registered student scanned (entering)
+- `RFID,<uid>,<roll>,<name>,EXIT` — known registered student scanned (exiting)
+- `RFID,<uid>,,Unknown,UNKNOWN` — unregistered card scanned
+
+#### Python → Arduino:
+- `BUZZER,ON` — sent when any queue occupancy exceeds its alert threshold
+- `BUZZER,OFF` — sent when all queues return within acceptable limits
 
 ---
 
-## 🎓 College Presentation Demo Flow
+## Pre-configured Students List in Firmware
 
-1. **Show Architecture**: Highlight the decoupled architecture (YOLO + ByteTrack CV engine writing to shared buffer & SQLite, Flask serving async API and MJPEG stream).
-2. **Run Diagnostics**: Run `python tests/test_usb_webcam.py` to demonstrate hardware detection.
-3. **Start Dashboard**: Show `app.py` running and initial empty / waiting state on browser.
-4. **Launch Monitor**: Run `python monitor.py`, choose video or webcam, draw 2 polygon queues (e.g. "Counter A" and "Counter B").
-5. **Demonstrate Real-Time Features**:
-   - People entering queue -> Occupancy counter increments.
-   - Tracking confirmation period prevents false triggers from passers-by.
-   - Recommended queue dynamically highlights shortest line.
-   - Trigger overcrowding alert by lowering threshold limit in UI settings.
-   - View historical charts plotting occupancy trends over time.
+| UID (Hex) | Roll Number | Student Name |
+|---|---|---|
+| `07b8bf26` | 24BCE8221 | G.Prasanth Paul |
+| `c1a9f868` | 24BCE8253 | G.Prem Sasank |
+| `d1157768` | 24BCA7344 | T.Mani Sankar |
+| `c1784968` | 24BCE8263 | D.Dinesh |
+| `c189f968` | 24BCA7285 | Pardha |
+| `d1b3d568` | 24BES7016 | G.Aditya |
+
+---
+
+## Step-by-Step Physical Hardware Testing
+
+1. **Flash the Arduino:**
+   - Open Arduino IDE.
+   - Open [`arduino/QueueSense_RFID.ino`](file:///D:/QueueSense/arduino/QueueSense_RFID.ino).
+   - Select Board: `Arduino Uno`, select your COM port.
+   - Click **Upload**.
+   - After upload, the 16x2 LCD should display:
+     ```
+     QueueSense RFID
+     Scan your card
+     ```
+
+2. **Start the Flask Web App:**
+   - Run `.\.venv\Scripts\python.exe app.py`.
+   - The console will display:
+     ```
+     [Arduino] Connected on COMx
+     [Arduino] QueueSense firmware ready.
+     ```
+   - In the web dashboard at `http://127.0.0.1:5000`, the top-right tag under Hardware Alerts will show:
+     `Connected · COMx`
+
+3. **Test Card Scans (RFID Attendance):**
+   - Tap any registered card (e.g., G.Prasanth Paul `07b8bf26`):
+     - Short beep (120ms) and LED blink.
+     - LCD displays:
+       ```
+       G.Prasanth Paul
+       24BCE8221 IN
+       ```
+     - Python logs: `[RFID] G.Prasanth Paul (24BCE8221) ENTRY`
+     - Flask web dashboard updates within 5s showing entry in the Student Attendance table.
+   - Tap the same card again after 2 seconds:
+     - Short beep and LED blink.
+     - LCD displays:
+       ```
+       G.Prasanth Paul
+       24BCE8221 OUT
+       ```
+     - Python logs: `[RFID] G.Prasanth Paul (24BCE8221) EXIT`
+   - Tap an unregistered card:
+     - Long beep (500ms).
+     - LCD displays:
+       ```
+       Unknown card
+       <uid>
+       ```
+     - Python logs: `[RFID] Unknown (unknown card) UNKNOWN`
+
+4. **Test Queue Alarm:**
+   - In the dashboard, lower the alert limit for a queue (e.g. set to `2` people).
+   - When YOLO detects > 2 people in that queue:
+     - Python sends `BUZZER,ON`.
+     - Buzzer sounds continuously.
+     - LCD displays:
+       ```
+       QUEUE LIMIT ALERT
+       Please wait...
+       ```
+     - Dashboard tag shows `Connected · COMx · ALARM ON`.
+   - When queue occupancy drops back to 2 or fewer:
+     - Python sends `BUZZER,OFF`.
+     - Buzzer turns off immediately.
+     - LCD resets to `QueueSense RFID / Scan your card`.
+
+---
+
+## API Reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/` | Dashboard |
+| GET | `/api/stats` | Queue occupancy, estimated waits, alert limits, Arduino status |
+| GET | `/api/attendance` | RFID attendance events + summary (searchable via `?search=...`) |
+| GET | `/api/alert-limits` | Current per-queue alert limits |
+| POST | `/api/alert-limits` | Update a queue's alert limit |
+| POST | `/api/queue-occupancy` | Monitor → Flask occupancy push |
+| GET | `/api/arduino/status` | Arduino connection status and alert state |
+| GET | `/video_feed` | MJPEG live video stream |
+
+---
+
+## Summary of All Changes
+
+| File | Change |
+|---|---|
+| `arduino/QueueSense_RFID.ino` | **Created** — Full Arduino sketch with RC522 RFID, 16x2 I2C LCD, active buzzer, status LED, 1500ms debounce, and 6 student records. |
+| `arduino_queue_bridge.py` | **Updated** — Complete bidirectional serial owner: handles `QUEUESENSE_READY`, parses 5-part RFID CSV (including unknown cards with empty roll), controls buzzer state machine, logs attendance to SQLite. |
+| `app.py` | **Fixed & Updated** — Removed duplicated content. Fully exposes `bridge.status()` (including `arduino_ready`) via `/api/stats` and `/api/arduino/status`. |
+| `templates/index.html` | **Cleaned & Verified** — Removed stray separator at line 1, removed duplicate CSS include, verified real-time dashboard updates. |
+| `tests/test_queuesense_phase3.py` | **Created** — 99 unit/integration tests for database, API, queue manager, and error handling. |
+| `tests/test_queuesense_phase5.py` | **Created** — 65 integration tests for Arduino sketch, registered student list, serial handshake, unknown cards, buzzer dispatch, and Flask API. |
+| `requirements.txt` | **Updated** — Added `pyserial>=3.5`. |
+| `README.md` | **Updated** — Complete documentation with wiring diagram, serial protocol, student table, and testing instructions. |

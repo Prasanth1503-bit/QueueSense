@@ -1,429 +1,704 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
+
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="QueueSense - AI-powered smart queue intelligence dashboard.">
-    <title>QueueSense | Smart Queue Intelligence</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QueueSense | Smart Queue Intelligence</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=6">
+  <script src="{{ url_for('static', filename='chart.umd.min.js') }}"></script>
 </head>
+
 <body>
-<div class="app-shell">
-  <aside class="sidebar" role="navigation">
-    <div class="brand">
-      <div class="brand-mark">Q</div>
-      <div><h1>QueueSense</h1><p class="brand-sub">SMART QUEUE INTELLIGENCE</p></div>
-    </div>
-    <div class="nav-label">WORKSPACE</div>
-    <a class="nav-item active" href="#overview" id="nav-overview"><span class="nav-icon">&#9638;</span> Overview</a>
-    <a class="nav-item" href="#live-monitor" id="nav-live"><span class="nav-icon">&#9677;</span> Live Monitor</a>
-    <a class="nav-item" href="#queue-details" id="nav-queues"><span class="nav-icon">&#9783;</span> Queue Details</a>
-    <a class="nav-item" href="#queue-analytics" id="nav-analytics"><span class="nav-icon">&#9636;</span> Analytics</a>
-    <div class="sidebar-bottom">
-      <div class="system-card">
-        <span class="pulse-dot"></span>
-        <div><strong>AI Detection Active</strong><small>YOLO + ByteTrack</small></div>
-      </div>
-      <p class="sidebar-foot">QueueSense Dashboard<br>Real-time queue analytics</p>
-    </div>
-  </aside>
-  <main class="main-content">
-    <header class="topbar">
-      <div>
-        <p class="eyebrow">QUEUE OPERATIONS / OVERVIEW</p>
-        <h2>Monitoring Dashboard</h2>
-        <p class="subheading">AI-powered real-time queue occupancy and movement tracking.</p>
-      </div>
-      <div class="topbar-right">
-        <div class="status-pill" id="system-status">
-          <span class="status-dot"></span>
-          <span id="status-text">Waiting for monitoring</span>
-        </div>
-        <div class="date-chip" id="current-time">--:--:--</div>
-      </div>
-    </header>
-    <section class="metric-grid" id="overview">
-      <div class="metric-card">
-        <div class="metric-top"><span>People Waiting</span><div class="metric-icon cyan">&#128101;</div></div>
-        <div class="metric-value" id="metric-total-waiting">--</div>
-        <p class="metric-note">Total across all active queues</p>
-      </div>
-      <div class="metric-card">
-        <div class="metric-top"><span>Total Entries</span><div class="metric-icon green">&#8601;</div></div>
-        <div class="metric-value" id="metric-total-entries">--</div>
-        <p class="metric-note">Confirmed entries this session</p>
-      </div>
-      <div class="metric-card">
-        <div class="metric-top"><span>Total Exits</span><div class="metric-icon orange">&#8599;</div></div>
-        <div class="metric-value" id="metric-total-exits">--</div>
-        <p class="metric-note">Confirmed exits this session</p>
-      </div>
-      <div class="metric-card">
-        <div class="metric-top"><span>Active Queues</span><div class="metric-icon purple">&#9783;</div></div>
-        <div class="metric-value" id="metric-active-queues">--</div>
-        <p class="metric-note">Queues currently monitored</p>
-      </div>
-    </section>
-    <section class="panel video-panel" id="live-monitor">
-      <div class="panel-heading">
-        <div><p class="eyebrow">CAMERA FEED</p><h3>Live Queue Monitoring</h3></div>
-        <span class="live-badge" id="live-badge"><span class="live-dot"></span> LIVE</span>
-      </div>
-      <div class="video-frame">
-        <img src="{{ url_for('video_feed') }}" alt="Live annotated queue monitoring feed" class="live-video" id="live-video-img">
-        <div class="video-placeholder" id="video-placeholder">
-          <div class="placeholder-icon">&#9677;</div>
-          <strong>Waiting for video frames</strong>
-          <p>Start <code>monitor.py</code> in a separate terminal to activate the live feed.</p>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">Q</div>
+        <div>
+          <h1>QueueSense</h1>
+          <p>SMART QUEUE INTELLIGENCE</p>
         </div>
       </div>
-      <div class="video-footer">
-        <span><i class="legend-box detection"></i> Confirmed member (blue box)</span>
-        <span><i class="legend-box confirming"></i> Confirming entry (green box)</span>
-        <span><i class="legend-box roi"></i> Queue ROI boundary</span>
-        <span class="feed-note" id="feed-source-note">Source: --</span>
-      </div>
-    </section>
-    <section class="recommendation-banner" id="recommendation-banner">
-      <div>
-        <p class="eyebrow">SMART RECOMMENDATION</p>
-        <h3>Shortest Estimated Wait</h3>
-        <p id="recommendedQueue" class="rec-queue-name">Start monitoring to see recommendation</p>
-      </div>
-      <div class="recommendation-wait">
-        <span>Estimated wait time</span>
-        <strong id="recommendedWait">--</strong>
-      </div>
-    </section>
-    <section class="alert-controls">
-      <label for="alertLimit">Overcrowding limit
-        <input id="alertLimit" type="number" min="1" max="500" value="10">
-        <span class="unit-label">people per queue</span>
-      </label>
-      <button id="saveAlertLimit" type="button" class="btn-save">Save limit</button>
-      <button id="toggleAlertSound" type="button" class="btn-sound" aria-pressed="false">Enable alert sound</button>
-      <span id="alertLimitStatus" class="alert-status-note">A queue turns red when it reaches this limit.</span>
-    </section>
-    <section id="overcrowdingAlert" class="alert-banner" role="alert" aria-live="assertive">
-      <strong>&#128680; QUEUE OVERCROWDING ALERT</strong>
-      <p id="overcrowdingAlertText">A queue has exceeded the configured limit.</p>
-    </section>
-    <section class="panel queues-panel" id="queue-details">
-      <div class="panel-heading">
-        <div><p class="eyebrow">QUEUE BREAKDOWN</p><h3>Queue Details</h3></div>
-        <span class="chart-tag" id="queue-count">0 queues</span>
-      </div>
-      <div class="queue-grid" id="queue-grid">
-        <div class="empty-state">
-          <div class="empty-icon">&#9783;</div>
-          <strong>No queue data yet</strong>
-          <p>Run <code>monitor.py</code> and draw ROI regions to start tracking.</p>
+
+      <div class="nav-label">WORKSPACE</div>
+      <a class="nav-item active" href="#overview"><span class="nav-icon">▦</span> Overview</a>
+      <a class="nav-item" href="#live-monitor"><span class="nav-icon">◉</span> Live Monitoring</a>
+      <a class="nav-item" href="#queue-details"><span class="nav-icon">☷</span> Queue Details</a>
+      <a class="nav-item" href="#queue-alert-settings"><span class="nav-icon">🔔</span> Hardware Alerts</a>
+      <a class="nav-item" href="#rfid-attendance"><span class="nav-icon">🪪</span> RFID Attendance</a>
+      <a class="nav-item" href="#queue-analytics"><span class="nav-icon">📊</span> Analytics & History</a>
+
+      <div class="sidebar-bottom">
+        <div class="system-card">
+          <span class="pulse-dot"></span>
+          <div>
+            <strong>Local AI System</strong>
+            <small>YOLO detection enabled</small>
+          </div>
         </div>
+        <p class="sidebar-foot">QueueSense Dashboard<br>Real-time queue analytics</p>
       </div>
-    </section>
-    <section class="panel" id="queue-analytics">
-      <div class="panel-heading">
-        <div><p class="eyebrow">PERSISTENT HISTORY</p><h3>Queue Analytics</h3></div>
-        <span class="chart-tag">Historical records</span>
-      </div>
-      <div class="filter-bar">
-        <label class="filter-item">
-          <span class="filter-label">Video session</span>
-          <select id="videoFilter" class="filter-select"><option value="">All Videos</option></select>
-        </label>
-        <label class="filter-item">
-          <span class="filter-label">Queue</span>
-          <select id="historyQueueFilter" class="filter-select"><option value="">All Queues</option></select>
-        </label>
-        <label class="filter-item">
-          <span class="filter-label">Time range</span>
-          <select id="historyHoursFilter" class="filter-select">
-            <option value="24">Last 24 hours</option>
-            <option value="168">Last 7 days</option>
-            <option value="720">Last 30 days</option>
-            <option value="8760">Last year</option>
-          </select>
-        </label>
-        <button id="refreshHistoryButton" type="button" class="btn-apply">Apply filters</button>
-      </div>
-      <p id="historyStatus" class="history-status">Loading historical records...</p>
-      <div class="chart-container"><canvas id="historicalChart"></canvas></div>
-      <div class="table-container">
-        <table>
-          <thead><tr><th>Recorded at</th><th>Video / Source</th><th>Queue</th><th>Occupancy</th><th>Session</th></tr></thead>
-          <tbody id="historyTableBody">
-            <tr><td colspan="5" class="table-empty">No history loaded.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-    <footer class="footer">
-      <span>QueueSense <b>&#8226;</b> Smart Queue Intelligence System</span>
-      <span>Local dashboard &#183; YOLO + ByteTrack &#183; Stats refresh every second</span>
-    </footer>
-  </main>
-</div>
-<script>
-const queueCharts = {};
-const queueHistory = {};
-let renderedQueueNames = [];
-let historyLoadedFor = "";
-let lastAnalyticsRefresh = 0;
-let queueAlertLimit = Math.max(1, Number(localStorage.getItem("queuesenseAlertLimit")) || 10);
-let alertSoundEnabled = false;
-let previouslyOverLimit = new Set();
-let alertAudioContext = null;
-let historicalChart = null;
-const QUEUE_COLORS = ["#36d6c5","#ffb66d","#b5a1ff","#58d6a3","#ff6b6b"];
+    </aside>
 
-function formatWait(s){const v=Number(s)||0;if(v>=60)return `${Math.floor(v/60)}m ${Math.round(v%60)}s`;return `${Math.round(v)} sec`;}
-function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));}
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">QUEUE OPERATIONS / OVERVIEW</p>
+          <h2>Monitoring Dashboard</h2>
+          <p class="subheading">Track queue occupancy, hardware alarms, and RFID attendance in real time.</p>
+        </div>
+        <div class="topbar-right">
+          <div class="status-pill" id="system-status">
+            <span class="status-dot"></span>
+            <span id="status-text">Waiting for monitoring</span>
+          </div>
+          <div class="date-chip" id="current-time">--:--:--</div>
+        </div>
+      </header>
 
-function playOvercrowdingBeep(){
-  if(!alertSoundEnabled)return;
-  try{
-    const Ctx=window.AudioContext||window.webkitAudioContext;if(!Ctx)return;
-    alertAudioContext=alertAudioContext||new Ctx();
-    if(alertAudioContext.state==="suspended")alertAudioContext.resume();
-    const osc=alertAudioContext.createOscillator(),gain=alertAudioContext.createGain();
-    osc.type="sine";osc.frequency.value=880;
-    gain.gain.setValueAtTime(0.0001,alertAudioContext.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.18,alertAudioContext.currentTime+0.03);
-    gain.gain.exponentialRampToValueAtTime(0.0001,alertAudioContext.currentTime+0.45);
-    osc.connect(gain);gain.connect(alertAudioContext.destination);
-    osc.start();osc.stop(alertAudioContext.currentTime+0.46);
-  }catch(e){console.warn("Alert sound error:",e);}
-}
+      <!-- METRIC CARDS -->
+      <section class="metric-grid" id="overview">
+        <div class="metric-card">
+          <div class="metric-top"><span>People Waiting</span><div class="metric-icon cyan">👥</div></div>
+          <div class="metric-value" id="metric-total-waiting">0</div>
+          <p class="metric-note">Total across all active queues</p>
+        </div>
+        <div class="metric-card">
+          <div class="metric-top"><span>Total Entries</span><div class="metric-icon green">↙</div></div>
+          <div class="metric-value" id="metric-total-entries">0</div>
+          <p class="metric-note">Confirmed entries this session</p>
+        </div>
+        <div class="metric-card">
+          <div class="metric-top"><span>Total Exits</span><div class="metric-icon orange">↗</div></div>
+          <div class="metric-value" id="metric-total-exits">0</div>
+          <p class="metric-note">Confirmed exits this session</p>
+        </div>
+        <div class="metric-card">
+          <div class="metric-top"><span>Active Queues</span><div class="metric-icon purple">▦</div></div>
+          <div class="metric-value" id="metric-active-queues">0</div>
+          <p class="metric-note">Queues currently monitored</p>
+        </div>
+      </section>
 
-function configureAlertControls(){
-  const inp=document.getElementById("alertLimit");
-  inp.value=String(queueAlertLimit);
-  document.getElementById("saveAlertLimit").addEventListener("click",()=>{
-    const v=Number(inp.value);
-    if(!Number.isInteger(v)||v<1||v>500){document.getElementById("alertLimitStatus").textContent="Enter a whole number from 1 to 500.";return;}
-    queueAlertLimit=v;localStorage.setItem("queuesenseAlertLimit",String(v));
-    previouslyOverLimit.clear();
-    document.getElementById("alertLimitStatus").textContent=`Alert limit saved: ${v} people per queue.`;
-    updateDashboard();
-  });
-  document.getElementById("toggleAlertSound").addEventListener("click",async e=>{
-    alertSoundEnabled=!alertSoundEnabled;
-    const btn=e.currentTarget;
-    btn.textContent=alertSoundEnabled?"Alert sound ON":"Enable alert sound";
-    btn.setAttribute("aria-pressed",String(alertSoundEnabled));
-    btn.classList.toggle("btn-sound-on",alertSoundEnabled);
-    if(alertSoundEnabled){
-      try{const Ctx=window.AudioContext||window.webkitAudioContext;if(Ctx){alertAudioContext=alertAudioContext||new Ctx();await alertAudioContext.resume();}
-        document.getElementById("alertLimitStatus").textContent="Sound ON — beeps when a queue first crosses the limit.";
-      }catch(_){document.getElementById("alertLimitStatus").textContent="Sound could not be enabled in this browser.";}
-    }else{document.getElementById("alertLimitStatus").textContent=`Limit: ${queueAlertLimit} people. Sound is off.`;}
-  });
-}
+      <!-- LIVE MONITORING -->
+      <section class="content-grid single-column" id="live-monitor">
+        <article class="panel video-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">CAMERA FEED</p>
+              <h3>Live Queue Monitoring</h3>
+            </div>
+            <span class="live-badge"><span class="live-dot"></span> LIVE</span>
+          </div>
+          <div class="video-frame">
+            <img id="live-video-stream" src="{{ url_for('video_feed') }}" alt="Live YOLO queue monitoring feed" class="live-video">
+            <div class="video-placeholder" id="video-placeholder">
+              <div class="placeholder-icon">◉</div>
+              <strong>Waiting for video frames</strong>
+              <p>Start <code>monitor.py</code> to display the annotated camera or video feed.</p>
+            </div>
+          </div>
+          <div class="video-footer">
+            <span><i class="legend-box detection"></i> Person detection</span>
+            <span><i class="legend-box roi"></i> Queue region (ROI)</span>
+            <span class="feed-note">Annotated YOLO feed</span>
+          </div>
+        </article>
+      </section>
 
-function updateOvercrowdingAlerts(queues){
-  const active=Object.entries(queues||{}).filter(([,s])=>(Number(s.occupancy)||0)>=queueAlertLimit);
-  const activeNames=new Set(active.map(([n])=>n));
-  document.querySelectorAll("#queue-grid .queue-card").forEach(card=>{card.classList.toggle("overcrowded",activeNames.has(card.dataset.queueName));});
-  const banner=document.getElementById("overcrowdingAlert");
-  if(active.length){
-    banner.classList.add("active");
-    document.getElementById("overcrowdingAlertText").textContent=active.map(([n,s])=>`${n}: ${Number(s.occupancy)||0} people (limit ${queueAlertLimit})`).join(" \u2022 ");
-    if(active.some(([n])=>!previouslyOverLimit.has(n)))playOvercrowdingBeep();
-  }else{banner.classList.remove("active");}
-  previouslyOverLimit=activeNames;
-}
+      <!-- RECOMMENDATION BANNER -->
+      <section class="recommendation-banner" id="recommendation-banner">
+        <div>
+          <p class="eyebrow">SMART RECOMMENDATION</p>
+          <h3>Shortest estimated queue</h3>
+          <p id="recommendedQueue">Waiting for queue data...</p>
+        </div>
+        <div class="recommendation-wait">
+          <span>Estimated wait</span>
+          <strong id="recommendedWait">--</strong>
+        </div>
+      </section>
 
-function setStatus(isMonitoring){
-  document.getElementById("system-status").classList.toggle("online",Boolean(isMonitoring));
-  document.getElementById("status-text").textContent=isMonitoring?"Monitoring active":"Waiting for monitoring";
-  document.getElementById("live-badge").classList.toggle("live-badge-active",Boolean(isMonitoring));
-}
+      <!-- QUEUE DETAILS WITH 3-COLOR CARDS -->
+      <section class="panel queues-panel" id="queue-details">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">QUEUE BREAKDOWN</p>
+            <h3>Queue Details</h3>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="chart-tag" id="queue-count">0 queues</span>
+          </div>
+        </div>
+        <div class="queue-grid" id="queue-grid">
+          <div class="empty-state">
+            <div class="empty-icon">☷</div>
+            <strong>No queue data yet</strong>
+            <p>Start the queue-monitoring script to see occupancy and waiting-time details.</p>
+          </div>
+        </div>
+      </section>
 
-function updateSummaryCards(queues,isMonitoring){
-  const names=Object.keys(queues||{});
-  const ids=["metric-total-waiting","metric-total-entries","metric-total-exits","metric-active-queues"];
-  if(!isMonitoring||!names.length){ids.forEach(id=>{document.getElementById(id).textContent="--";});return;}
-  document.getElementById("metric-total-waiting").textContent=names.reduce((s,n)=>s+(Number(queues[n].occupancy)||0),0);
-  document.getElementById("metric-total-entries").textContent=names.reduce((s,n)=>s+(Number(queues[n].entries)||0),0);
-  document.getElementById("metric-total-exits").textContent=names.reduce((s,n)=>s+(Number(queues[n].exits)||0),0);
-  document.getElementById("metric-active-queues").textContent=names.length;
-}
+      <!-- HARDWARE ALERTS SETTINGS -->
+      <section class="panel integration-panel" id="queue-alert-settings">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">HARDWARE ALERTS</p>
+            <h3>Queue Occupancy Limits & Buzzer Control</h3>
+          </div>
+          <span id="arduino-status" class="chart-tag">Arduino checking…</span>
+        </div>
+        <p class="integration-help">
+          The <strong>buzzer triggers automatically</strong> when any queue exceeds its limit (turn <span style="color:#ff4d4f;font-weight:700;">RED</span>).
+          It turns off only when all queues return to normal (<span style="color:#58d6a3;font-weight:700;">GREEN</span>).
+        </p>
+        <div id="limit-controls" class="limit-controls">
+          <p>Loading queue limits…</p>
+        </div>
+        <div id="limit-message" class="integration-message" role="status"></div>
+      </section>
 
-function renderQueueCards(queues,isMonitoring){
-  const grid=document.getElementById("queue-grid");
-  const names=Object.keys(queues||{});
-  document.getElementById("queue-count").textContent=`${names.length} ${names.length===1?"queue":"queues"}`;
-  if(JSON.stringify(names)!==JSON.stringify(renderedQueueNames)){
-    Object.values(queueCharts).forEach(c=>c.destroy());
-    Object.keys(queueCharts).forEach(k=>delete queueCharts[k]);
-    Object.keys(queueHistory).forEach(k=>delete queueHistory[k]);
-    renderedQueueNames=names.slice();historyLoadedFor="";
-    if(!names.length){
-      grid.innerHTML='<div class="empty-state"><div class="empty-icon">&#9783;</div><strong>No queue data yet</strong><p>Run <code>monitor.py</code> and draw ROI regions.</p></div>';
-      return;
+      <!-- RFID STUDENT ATTENDANCE -->
+      <section class="panel integration-panel" id="rfid-attendance">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">RFID MODULE</p>
+            <h3>Student Attendance</h3>
+          </div>
+          <button class="refresh-button" id="refresh-attendance">Refresh</button>
+        </div>
+        <div class="attendance-summary" id="attendance-summary">
+          <div><span>Total scans</span><strong>0</strong></div>
+          <div><span>Entries</span><strong>0</strong></div>
+          <div><span>Exits</span><strong>0</strong></div>
+          <div><span>Students</span><strong>0</strong></div>
+        </div>
+        <div class="attendance-tools">
+          <input id="attendance-search" type="search" placeholder="Search name, roll number or UID">
+          <span id="attendance-message"></span>
+        </div>
+        <div class="table-scroll">
+          <table class="attendance-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Name</th>
+                <th>Roll number</th>
+                <th>UID</th>
+                <th>Event</th>
+              </tr>
+            </thead>
+            <tbody id="attendance-rows">
+              <tr>
+                <td colspan="5">Loading attendance…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- PERSISTENT HISTORICAL ANALYTICS (MOVED TO LAST) -->
+      <section class="panel" id="queue-analytics">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">PERSISTENT HISTORY</p>
+            <h3>Queue Analytics & History</h3>
+          </div>
+          <span class="chart-tag">Historical records</span>
+        </div>
+        <div class="filter-bar">
+          <label class="filter-item">
+            <span class="filter-label">Video session</span>
+            <select id="videoFilter" class="filter-select"><option value="">All Video Sessions</option></select>
+          </label>
+          <label class="filter-item">
+            <span class="filter-label">Queue</span>
+            <select id="historyQueueFilter" class="filter-select"><option value="">All Queues</option></select>
+          </label>
+          <label class="filter-item">
+            <span class="filter-label">Time range</span>
+            <select id="historyHoursFilter" class="filter-select">
+              <option value="24" selected>Last 24 hours</option>
+              <option value="168">Last 7 days</option>
+              <option value="720">Last 30 days</option>
+              <option value="8760">Last year</option>
+            </select>
+          </label>
+          <button id="refreshHistoryButton" type="button" class="btn-apply">Apply filters</button>
+        </div>
+        <p id="historyStatus" class="history-status">Loading historical records...</p>
+        <div class="chart-container" style="height: 280px; position: relative; margin-bottom: 20px;">
+          <canvas id="historicalChart"></canvas>
+        </div>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr><th>Recorded at</th><th>Video / Source</th><th>Queue</th><th>Occupancy</th><th>Session</th></tr>
+            </thead>
+            <tbody id="historyTableBody">
+              <tr><td colspan="5" class="table-empty">No history loaded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <span>QueueSense <b>•</b> Smart Queue Intelligence System</span>
+        <span>Local dashboard · Statistics refresh automatically</span>
+      </footer>
+    </main>
+  </div>
+
+  <script>
+    const queueCharts = {};
+    const queueHistory = {};
+    let renderedQueueNames = [];
+    let historicalChart = null;
+    let audioContext = null;
+    const QUEUE_COLORS = ["#36d6c5", "#58d6a3", "#ffb66d", "#b5a1ff", "#f43f5e", "#38bdf8"];
+
+    function formatWait(seconds) {
+      const value = Number(seconds) || 0;
+      if (value >= 60) return `${Math.floor(value / 60)}m ${Math.round(value % 60)}s`;
+      return `${Math.round(value)} sec`;
     }
-    grid.innerHTML=names.map((name,i)=>`
-      <article class="queue-card" data-queue-name="${escapeHtml(name)}">
-        <div class="queue-card-top">
-          <div class="queue-symbol" style="background:${QUEUE_COLORS[i%QUEUE_COLORS.length]}22;color:${QUEUE_COLORS[i%QUEUE_COLORS.length]}">${String(i+1).padStart(2,"0")}</div>
-          <div class="queue-title"><h4>${escapeHtml(name)}</h4><span>Queue analytics</span></div>
-          <span class="overcrowded-badge">&#9888; OVER LIMIT</span>
-          <span class="queue-live"><span></span> LIVE</span>
-        </div>
-        <div class="queue-occupancy">
-          <div><span>People in this queue</span><strong id="occupancy-${i}">0</strong></div>
-          <div class="occupancy-track"><span id="bar-${i}" style="width:0%;background:${QUEUE_COLORS[i%QUEUE_COLORS.length]}"></span></div>
-        </div>
-        <div class="queue-stats">
-          <div><span>Entries</span><strong id="entries-${i}">0</strong></div>
-          <div><span>Exits</span><strong id="exits-${i}">0</strong></div>
-          <div><span>Avg elapsed</span><strong id="wait-${i}">0 sec</strong></div>
-          <div><span>Est. wait</span><strong id="predicted-${i}">--</strong></div>
-        </div>
-        <div class="individual-chart-heading"><strong>Occupancy history</strong><span>${escapeHtml(name)} only</span></div>
-        <div class="individual-chart-wrap"><canvas id="chart-${i}"></canvas></div>
-        <div class="history-summary" id="history-summary-${i}">
-          <div><span>Peak</span><strong id="peak-${i}">--</strong></div>
-          <div><span>Average</span><strong id="avg-${i}">--</strong></div>
-          <div><span>Samples</span><strong id="samples-${i}">0</strong></div>
-        </div>
-      </article>`).join("");
-    names.forEach((name,i)=>{
-      queueHistory[name]={labels:[],values:[]};
-      const canvas=document.getElementById(`chart-${i}`);
-      if(window.Chart&&canvas){
-        queueCharts[name]=new Chart(canvas,{
-          type:"line",
-          data:{labels:queueHistory[name].labels,datasets:[{label:name,data:queueHistory[name].values,borderWidth:2,borderColor:QUEUE_COLORS[i%QUEUE_COLORS.length],backgroundColor:QUEUE_COLORS[i%QUEUE_COLORS.length]+"22",fill:true,tension:0.3,pointRadius:1.5,pointHoverRadius:4}]},
-          options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:false},tooltip:{mode:"index",intersect:false}},scales:{x:{grid:{display:false},ticks:{color:"#8592a8",maxTicksLimit:4,maxRotation:0}},y:{beginAtZero:true,ticks:{precision:0,color:"#8592a8"},grid:{color:"rgba(150,165,190,0.10)"}}}}
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;"
+      }[char]));
+    }
+
+    let streamActive = false;
+    let streamFailed = false;
+
+    function setStatus(isMonitoring) {
+      const status = document.getElementById("system-status");
+      status.classList.toggle("online", Boolean(isMonitoring));
+      document.getElementById("status-text").textContent =
+        isMonitoring ? "Monitoring active" : "Waiting for monitoring";
+
+      const badge = document.querySelector(".live-badge");
+      if (badge) badge.classList.toggle("live-badge-active", Boolean(isMonitoring));
+
+      const placeholder = document.getElementById("video-placeholder");
+      const img = document.getElementById("live-video-stream");
+
+      if (isMonitoring) {
+        if (placeholder) placeholder.classList.add("hidden");
+        if (img && (!streamActive || streamFailed)) {
+          streamActive = true;
+          streamFailed = false;
+          img.src = "{{ url_for('video_feed') }}?t=" + Date.now();
+        }
+      } else {
+        if (placeholder) placeholder.classList.remove("hidden");
+        streamActive = false;
+      }
+    }
+
+    function updateSummaryMetrics(queues) {
+      const names = Object.keys(queues || {});
+      const totalWaiting = names.reduce((sum, n) => sum + (Number(queues[n].occupancy) || 0), 0);
+      const totalEntries = names.reduce((sum, n) => sum + (Number(queues[n].entries) || 0), 0);
+      const totalExits = names.reduce((sum, n) => sum + (Number(queues[n].exits) || 0), 0);
+
+      document.getElementById("metric-total-waiting").textContent = totalWaiting;
+      document.getElementById("metric-total-entries").textContent = totalEntries;
+      document.getElementById("metric-total-exits").textContent = totalExits;
+      document.getElementById("metric-active-queues").textContent = names.length;
+    }
+
+    function renderQueueCards(queues) {
+      const grid = document.getElementById("queue-grid");
+      const names = Object.keys(queues || {});
+      document.getElementById("queue-count").textContent =
+        `${names.length} ${names.length === 1 ? "queue" : "queues"}`;
+
+      if (JSON.stringify(names) !== JSON.stringify(renderedQueueNames)) {
+        Object.values(queueCharts).forEach(chart => chart.destroy());
+        Object.keys(queueCharts).forEach(name => delete queueCharts[name]);
+        Object.keys(queueHistory).forEach(name => delete queueHistory[name]);
+        renderedQueueNames = names.slice();
+
+        if (names.length === 0) {
+          grid.innerHTML = `<div class="empty-state"><div class="empty-icon">☷</div><strong>No queue data yet</strong><p>Start the queue-monitoring script to see individual queue statistics.</p></div>`;
+          return;
+        }
+
+        grid.innerHTML = names.map((name, index) => `
+          <article class="queue-card status-green" id="card-${index}">
+            <div class="queue-card-top">
+              <div class="queue-symbol">${String(index + 1).padStart(2, "0")}</div>
+              <div class="queue-title">
+                <h4>${escapeHtml(name)}</h4>
+                <span>Limit: <strong id="limit-label-${index}">--</strong></span>
+              </div>
+              <span class="queue-status-tag" id="status-tag-${index}">NORMAL</span>
+            </div>
+            <div class="queue-occupancy">
+              <div>
+                <span>Occupancy</span>
+                <strong id="occupancy-${index}">0</strong>
+              </div>
+              <div class="occupancy-track"><span id="bar-${index}" style="width:0%"></span></div>
+            </div>
+            <div class="queue-stats">
+              <div><span>Entries</span><strong id="entries-${index}">0</strong></div>
+              <div><span>Exits</span><strong id="exits-${index}">0</strong></div>
+              <div><span>Avg. elapsed</span><strong id="wait-${index}">0 sec</strong></div>
+              <div><span>Estimated wait</span><strong id="predicted-${index}">--</strong></div>
+            </div>
+            <div class="individual-chart-heading"><strong>Occupancy history</strong><span>Live</span></div>
+            <div class="individual-chart-wrap"><canvas id="chart-${index}" aria-label="Occupancy history for ${escapeHtml(name)}"></canvas></div>
+          </article>`).join("");
+
+        names.forEach((name, index) => {
+          queueHistory[name] = { labels: [], values: [] };
+          const canvas = document.getElementById(`chart-${index}`);
+          if (window.Chart && canvas) {
+            queueCharts[name] = new Chart(canvas, {
+              type: "line",
+              data: {
+                labels: queueHistory[name].labels, datasets: [{
+                  label: `${name} people`, data: queueHistory[name].values,
+                  borderWidth: 2, borderColor: QUEUE_COLORS[index % QUEUE_COLORS.length],
+                  backgroundColor: QUEUE_COLORS[index % QUEUE_COLORS.length] + "22", fill: true,
+                  tension: 0.3, pointRadius: 1.5, pointHoverRadius: 4
+                }]
+              },
+              options: {
+                responsive: true, maintainAspectRatio: false,
+                animation: false,
+                plugins: { legend: { display: false }, tooltip: { mode: "index", intersect: false } },
+                scales: {
+                  x: { grid: { display: false }, ticks: { color: "#8592a8", maxTicksLimit: 4, maxRotation: 0 } },
+                  y: { beginAtZero: true, ticks: { precision: 0, color: "#8592a8" }, grid: { color: "rgba(150,165,190,0.10)" } }
+                }
+              }
+            });
+          }
         });
       }
-    });
-  }
-  const nowStr=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});
-  names.forEach((name,i)=>{
-    const q=queues[name]||{};const occ=Number(q.occupancy)||0;
-    document.getElementById(`occupancy-${i}`).textContent=occ;
-    document.getElementById(`entries-${i}`).textContent=Number(q.entries)||0;
-    document.getElementById(`exits-${i}`).textContent=Number(q.exits)||0;
-    document.getElementById(`wait-${i}`).textContent=formatWait(q.average_wait_seconds);
-    document.getElementById(`predicted-${i}`).textContent=formatWait(q.estimated_wait_seconds);
-    document.getElementById(`bar-${i}`).style.width=`${Math.min(100,occ*10)}%`;
-    const h=queueHistory[name];
-    if(h){h.labels.push(nowStr);h.values.push(occ);if(h.labels.length>40){h.labels.shift();h.values.shift();}if(queueCharts[name])queueCharts[name].update("none");}
-  });
-}
 
-async function loadHistoricalAnalytics(names,force=false){
-  if(!names.length)return;
-  const sig=names.join("||");const nowMs=Date.now();
-  if(!force&&historyLoadedFor===sig&&nowMs-lastAnalyticsRefresh<15000)return;
-  try{
-    const[hr,sr]=await Promise.all([fetch("/api/history?hours=24&limit=1000",{cache:"no-store"}),fetch("/api/history/summary?hours=24",{cache:"no-store"})]);
-    if(!hr.ok||!sr.ok)throw new Error();
-    const hd=await hr.json();const sd=await sr.json();
-    names.forEach((name,i)=>{
-      const records=(hd.history||[]).filter(r=>r.queue_name===name);
-      const h=queueHistory[name];if(!h)return;
-      h.labels.splice(0,h.labels.length);h.values.splice(0,h.values.length);
-      records.forEach(r=>{const t=new Date(r.recorded_at);h.labels.push(isNaN(t.getTime())?r.recorded_at:t.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}));h.values.push(Number(r.occupancy)||0);});
-      if(queueCharts[name])queueCharts[name].update("none");
-      const sum=(sd.summary||{})[name]||{};
-      if(sum.samples){document.getElementById(`peak-${i}`).textContent=sum.peak_occupancy;document.getElementById(`avg-${i}`).textContent=sum.average_occupancy;document.getElementById(`samples-${i}`).textContent=sum.samples;}
-    });
-    historyLoadedFor=sig;lastAnalyticsRefresh=Date.now();
-  }catch(e){console.error("Analytics load error:",e);}
-}
+      const now = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      names.forEach((name, index) => {
+        const q = queues[name] || {};
+        const occupancy = Number(q.occupancy) || 0;
+        const limit = Number(q.alert_limit) || 5;
+        const statusColor = q.status_color || (occupancy > limit ? "red" : (occupancy >= limit - 1 && occupancy > 0 ? "yellow" : "green"));
+        const statusText = q.status_text || (statusColor === "red" ? "OVER LIMIT" : (statusColor === "yellow" ? "NEAR LIMIT" : "NORMAL"));
 
-async function populateVideoFilter(){
-  const sel=document.getElementById("videoFilter");const prev=sel.value;
-  const hours=document.getElementById("historyHoursFilter").value;
-  try{const r=await fetch(`/api/history/videos?hours=${encodeURIComponent(hours)}`,{cache:"no-store"});if(!r.ok)throw new Error();
-    const d=await r.json();sel.innerHTML='<option value="">All Videos</option>';
-    (d.videos||[]).forEach(v=>{const o=document.createElement("option");o.value=v.video_hash||"";o.textContent=v.video_name||"Unknown video";sel.appendChild(o);});
-    if([...sel.options].some(o=>o.value===prev))sel.value=prev;
-  }catch(e){document.getElementById("historyStatus").textContent="Could not load video filter options.";}
-}
+        const card = document.getElementById(`card-${index}`);
+        if (card) {
+          card.classList.remove("status-green", "status-yellow", "status-red");
+          card.classList.add(`status-${statusColor}`);
+        }
 
-async function populateQueueFilter(){
-  const sel=document.getElementById("historyQueueFilter");const prev=sel.value;
-  const hours=document.getElementById("historyHoursFilter").value;const vh=document.getElementById("videoFilter").value;
-  const params=new URLSearchParams({hours});if(vh)params.set("video_hash",vh);
-  try{const r=await fetch(`/api/history/queues?${params}`,{cache:"no-store"});if(!r.ok)throw new Error();
-    const d=await r.json();sel.innerHTML='<option value="">All Queues</option>';
-    (d.queues||[]).forEach(q=>{const name=typeof q==="string"?q:(q.queue_name||q.name||"");if(!name)return;const o=document.createElement("option");o.value=name;o.textContent=name;sel.appendChild(o);});
-    if([...sel.options].some(o=>o.value===prev))sel.value=prev;
-  }catch(e){}
-}
+        const tag = document.getElementById(`status-tag-${index}`);
+        if (tag) tag.textContent = statusText;
 
-async function loadHistoryPanel(){
-  const status=document.getElementById("historyStatus");
-  const hours=document.getElementById("historyHoursFilter").value;
-  const vh=document.getElementById("videoFilter").value;const qn=document.getElementById("historyQueueFilter").value;
-  const params=new URLSearchParams({hours,limit:"1000"});if(vh)params.set("video_hash",vh);if(qn)params.set("queue",qn);
-  try{
-    const r=await fetch(`/api/history?${params}`,{cache:"no-store"});if(!r.ok)throw new Error("History API error");
-    const d=await r.json();const rows=d.history||[];
-    const queueData={};
-    rows.forEach(row=>{if(!queueData[row.queue_name])queueData[row.queue_name]=[];queueData[row.queue_name].push(row);});
-    const allTs=[...new Set(rows.map(r=>r.recorded_at))].sort();
-    const allLabels=allTs.map(ts=>{const dt=new Date(ts);return isNaN(dt.getTime())?ts:dt.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});});
-    const datasets=Object.entries(queueData).map(([name,qrows],i)=>{
-      const vm={};qrows.forEach(r=>{vm[r.recorded_at]=Number(r.occupancy)||0;});
-      return{label:name,data:allTs.map(ts=>vm[ts]??null),borderColor:QUEUE_COLORS[i%QUEUE_COLORS.length],backgroundColor:QUEUE_COLORS[i%QUEUE_COLORS.length]+"22",borderWidth:2,fill:false,tension:0.3,pointRadius:1.5,spanGaps:true};
-    });
-    const canvas=document.getElementById("historicalChart");
-    if(window.Chart&&canvas){
-      if(historicalChart)historicalChart.destroy();
-      historicalChart=new Chart(canvas,{type:"line",data:{labels:allLabels,datasets},options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:true,labels:{color:"#aebbd0",boxWidth:12,padding:16}},tooltip:{mode:"index",intersect:false}},scales:{x:{ticks:{color:"#8592a8",maxTicksLimit:8,maxRotation:35},grid:{display:false}},y:{beginAtZero:true,ticks:{precision:0,color:"#8592a8"},grid:{color:"rgba(150,165,190,0.10)"}}}}});
+        const limitLabel = document.getElementById(`limit-label-${index}`);
+        if (limitLabel) limitLabel.textContent = `${limit} people`;
+
+        document.getElementById(`occupancy-${index}`).textContent = occupancy;
+        document.getElementById(`entries-${index}`).textContent = Number(q.entries) || 0;
+        document.getElementById(`exits-${index}`).textContent = Number(q.exits) || 0;
+        document.getElementById(`wait-${index}`).textContent = formatWait(q.average_wait_seconds);
+        document.getElementById(`predicted-${index}`).textContent = formatWait(q.estimated_wait_seconds);
+
+        const pct = limit > 0 ? Math.min(100, Math.round((occupancy / limit) * 100)) : 100;
+        document.getElementById(`bar-${index}`).style.width = `${pct}%`;
+
+        const history = queueHistory[name];
+        if (history) {
+          history.labels.push(now);
+          history.values.push(occupancy);
+          if (history.labels.length > 30) { history.labels.shift(); history.values.shift(); }
+          if (queueCharts[name]) queueCharts[name].update("none");
+        }
+      });
     }
-    const tbody=document.getElementById("historyTableBody");
-    if(!rows.length){tbody.innerHTML='<tr><td colspan="5" class="table-empty">No historical records match these filters yet.</td></tr>';}
-    else{tbody.innerHTML=rows.slice().reverse().slice(0,100).map(row=>{const dt=new Date(row.recorded_at);const dtText=isNaN(dt.getTime())?(row.recorded_at||"\u2014"):dt.toLocaleString();return`<tr><td>${escapeHtml(dtText)}</td><td>${escapeHtml(row.video_name||"Unknown")}</td><td>${escapeHtml(row.queue_name||"\u2014")}</td><td>${Number(row.occupancy)||0}</td><td class="session-cell">${escapeHtml((row.session_id||"\u2014").slice(0,12))}\u2026</td></tr>`;}).join("");}
-    status.textContent=`${rows.length} sample(s) found. Showing most recent 100 in the table.`;
-  }catch(e){console.error("History load error:",e);status.textContent="Could not load history. Make sure app.py is running.";}
-}
 
-async function refreshHistoryFilters(){await populateVideoFilter();await populateQueueFilter();await loadHistoryPanel();}
-document.getElementById("refreshHistoryButton").addEventListener("click",refreshHistoryFilters);
-document.getElementById("videoFilter").addEventListener("change",async()=>{await populateQueueFilter();await loadHistoryPanel();});
-document.getElementById("historyQueueFilter").addEventListener("change",loadHistoryPanel);
-document.getElementById("historyHoursFilter").addEventListener("change",refreshHistoryFilters);
-refreshHistoryFilters();
+    async function updateDashboard() {
+      try {
+        const response = await fetch("/api/stats", { cache: "no-store" });
+        if (!response.ok) throw new Error("Could not load queue statistics");
+        const data = await response.json();
+        setStatus(data.monitoring);
+        updateSummaryMetrics(data.queues || {});
+        renderQueueCards(data.queues || {});
 
-async function updateDashboard(){
-  try{
-    const r=await fetch("/api/stats",{cache:"no-store"});if(!r.ok)throw new Error("Stats API error");
-    const data=await r.json();
-    setStatus(data.monitoring);
-    updateSummaryCards(data.queues||{},data.monitoring);
-    renderQueueCards(data.queues||{},data.monitoring);
-    updateOvercrowdingAlerts(data.queues||{});
-    await loadHistoricalAnalytics(Object.keys(data.queues||{}));
-    const rec=data.recommended_queue;
-    const recEl=document.getElementById("recommendedQueue");const waitEl=document.getElementById("recommendedWait");
-    if(!data.monitoring){recEl.textContent="Start monitor.py to see queue recommendation";waitEl.textContent="--";}
-    else if(rec){recEl.textContent=`Recommended: ${rec}`;waitEl.textContent=data.recommended_wait_seconds!=null?formatWait(data.recommended_wait_seconds):"--";}
-    else{recEl.textContent="No queue data available";waitEl.textContent="--";}
-    const src=Object.values(data.queues||{}).map(q=>q.video_name).filter(Boolean);
-    const fn=document.getElementById("feed-source-note");if(fn&&src.length)fn.textContent="Source: "+[...new Set(src)].join(", ");
-  }catch(e){setStatus(false);console.error("Dashboard update failed:",e);}
-  const img=document.getElementById("live-video-img");const ph=document.getElementById("video-placeholder");
-  if(img&&ph){img.onload=()=>ph.classList.add("hidden");if(img.complete&&img.naturalWidth>0)ph.classList.add("hidden");}
-}
+        const recommendation = data.recommended_queue;
+        document.getElementById("recommendedQueue").textContent =
+          recommendation ? `Recommended: ${recommendation}` : "No queue data available";
+        document.getElementById("recommendedWait").textContent =
+          data.recommended_wait_seconds !== null &&
+            data.recommended_wait_seconds !== undefined
+            ? formatWait(data.recommended_wait_seconds)
+            : "--";
+      } catch (error) {
+        setStatus(false);
+        console.error("QueueSense dashboard update failed:", error);
+      }
 
-function updateClock(){document.getElementById("current-time").textContent=new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit",second:"2-digit"});}
+      const liveImage = document.getElementById("live-video-stream");
+      const placeholder = document.getElementById("video-placeholder");
+      if (liveImage && placeholder) {
+        liveImage.onload = () => {
+          streamFailed = false;
+          placeholder.classList.add("hidden");
+        };
+        liveImage.onerror = () => {
+          streamFailed = true;
+          if (!streamActive) placeholder.classList.remove("hidden");
+        };
+      }
+    }
 
-const navSections=[{id:"overview",navId:"nav-overview"},{id:"live-monitor",navId:"nav-live"},{id:"queue-details",navId:"nav-queues"},{id:"queue-analytics",navId:"nav-analytics"}];
-function updateActiveNav(){let active=navSections[0].navId;for(const{id,navId}of navSections){const el=document.getElementById(id);if(el&&el.getBoundingClientRect().top<=80)active=navId;}document.querySelectorAll(".nav-item").forEach(a=>a.classList.remove("active"));const ae=document.getElementById(active);if(ae)ae.classList.add("active");}
-window.addEventListener("scroll",updateActiveNav,{passive:true});
+    function updateClock() {
+      document.getElementById("current-time").textContent =
+        new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
 
-configureAlertControls();
-updateDashboard();updateClock();
-setInterval(updateDashboard,1000);setInterval(updateClock,1000);setInterval(refreshHistoryFilters,30000);
-</script>
+    // ==========================================
+    // HISTORICAL ANALYTICS FUNCTIONS
+    // ==========================================
+    async function populateVideoFilter() {
+      const sel = document.getElementById("videoFilter");
+      const prev = sel.value;
+      try {
+        const r = await fetch(`/api/history/videos`, { cache: "no-store" });
+        if (!r.ok) throw new Error();
+        const d = await r.json();
+        sel.innerHTML = '<option value="">All Video Sessions</option>';
+        (d.videos || []).forEach(v => {
+          const o = document.createElement("option");
+          o.value = v.video_hash || "";
+          o.textContent = v.video_name || "Laptop Camera / Video";
+          sel.appendChild(o);
+        });
+        if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+      } catch (e) {
+        document.getElementById("historyStatus").textContent = "Could not load video filter options.";
+      }
+    }
+
+    async function populateQueueFilter() {
+      const sel = document.getElementById("historyQueueFilter");
+      const prev = sel.value;
+      const hours = document.getElementById("historyHoursFilter").value;
+      const vh = document.getElementById("videoFilter").value;
+      const params = new URLSearchParams({ hours });
+      if (vh) params.set("video_hash", vh);
+      try {
+        const r = await fetch(`/api/history/queues?${params}`, { cache: "no-store" });
+        if (!r.ok) throw new Error();
+        const d = await r.json();
+        sel.innerHTML = '<option value="">All Queues</option>';
+        (d.queues || []).forEach(q => {
+          const name = typeof q === "string" ? q : (q.queue_name || q.name || "");
+          if (!name) return;
+          const o = document.createElement("option");
+          o.value = name;
+          o.textContent = name;
+          sel.appendChild(o);
+        });
+        if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+      } catch (e) {}
+    }
+
+    async function loadHistoryPanel() {
+      const status = document.getElementById("historyStatus");
+      const hours = document.getElementById("historyHoursFilter").value;
+      const vh = document.getElementById("videoFilter").value;
+      const qn = document.getElementById("historyQueueFilter").value;
+      const params = new URLSearchParams({ hours, limit: "1000" });
+      if (vh) params.set("video_hash", vh);
+      if (qn) params.set("queue", qn);
+      try {
+        const r = await fetch(`/api/history?${params}`, { cache: "no-store" });
+        if (!r.ok) throw new Error("History API error");
+        const d = await r.json();
+        const rows = d.history || [];
+
+        const queueData = {};
+        rows.forEach(row => {
+          if (!queueData[row.queue_name]) queueData[row.queue_name] = [];
+          queueData[row.queue_name].push(row);
+        });
+
+        const allTs = [...new Set(rows.map(r => r.recorded_at))].sort();
+        const allLabels = allTs.map(ts => {
+          const dt = new Date(ts);
+          return isNaN(dt.getTime()) ? ts : dt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        });
+
+        const datasets = Object.entries(queueData).map(([name, qrows], i) => {
+          const vm = {};
+          qrows.forEach(r => { vm[r.recorded_at] = Number(r.occupancy) || 0; });
+          const color = QUEUE_COLORS[i % QUEUE_COLORS.length];
+          return {
+            label: name,
+            data: allTs.map(ts => vm[ts] ?? null),
+            borderColor: color,
+            backgroundColor: color + "22",
+            borderWidth: 2,
+            fill: false,
+            tension: 0.3,
+            pointRadius: 1.5,
+            spanGaps: true
+          };
+        });
+
+        const canvas = document.getElementById("historicalChart");
+        if (window.Chart && canvas) {
+          if (historicalChart) historicalChart.destroy();
+          historicalChart = new Chart(canvas, {
+            type: "line",
+            data: { labels: allLabels, datasets },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              animation: false,
+              plugins: {
+                legend: { display: true, labels: { color: "#aebbd0", boxWidth: 12, padding: 16 } },
+                tooltip: { mode: "index", intersect: false }
+              },
+              scales: {
+                x: { ticks: { color: "#8592a8", maxTicksLimit: 8, maxRotation: 35 }, grid: { display: false } },
+                y: { beginAtZero: true, ticks: { precision: 0, color: "#8592a8" }, grid: { color: "rgba(150,165,190,0.10)" } }
+              }
+            }
+          });
+        }
+
+        const tbody = document.getElementById("historyTableBody");
+        if (!rows.length) {
+          tbody.innerHTML = '<tr><td colspan="5" class="table-empty">No historical records match these filters yet.</td></tr>';
+        } else {
+          tbody.innerHTML = rows.slice().reverse().slice(0, 100).map(row => {
+            const dt = new Date(row.recorded_at);
+            const dtText = isNaN(dt.getTime()) ? (row.recorded_at || "—") : dt.toLocaleString();
+            return `<tr>
+              <td>${escapeHtml(dtText)}</td>
+              <td>${escapeHtml(row.video_name || "Camera / Video")}</td>
+              <td>${escapeHtml(row.queue_name || "—")}</td>
+              <td><strong>${Number(row.occupancy) || 0}</strong></td>
+              <td class="session-cell">${escapeHtml((row.session_id || "—").slice(0, 12))}…</td>
+            </tr>`;
+          }).join("");
+        }
+        status.textContent = `${rows.length} record(s) found. Showing most recent 100 in the table.`;
+      } catch (e) {
+        console.error("History load error:", e);
+        status.textContent = "Could not load history. Make sure app.py is running.";
+      }
+    }
+
+    async function refreshHistoryFilters() {
+      await populateVideoFilter();
+      await populateQueueFilter();
+      await loadHistoryPanel();
+    }
+
+    document.getElementById("refreshHistoryButton").addEventListener("click", refreshHistoryFilters);
+    document.getElementById("videoFilter").addEventListener("change", async () => {
+      await populateQueueFilter();
+      await loadHistoryPanel();
+    });
+    document.getElementById("historyQueueFilter").addEventListener("change", loadHistoryPanel);
+    document.getElementById("historyHoursFilter").addEventListener("change", refreshHistoryFilters);
+
+    // ==========================================
+    // HARDWARE ALERTS & RFID FUNCTIONS
+    // ==========================================
+    async function loadAlertLimits() {
+      const box = document.getElementById("limit-controls");
+      try {
+        const response = await fetch("/api/alert-limits", { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Unable to load limits");
+        const limits = data.limits || {};
+        const names = Object.keys(limits);
+        if (!names.length) { box.innerHTML = "<p>No queue limits configured yet. Limits will appear after queues are saved.</p>"; return; }
+        box.innerHTML = names.map(name => `<form class="limit-form" data-queue="${escapeHtml(name)}"><label>${escapeHtml(name)}<span>Alert buzzer when occupancy exceeds</span></label><input name="limit_people" type="number" min="0" max="10000" required value="${Number(limits[name].limit_people) || 0}"><span>people</span><button type="submit">Save</button></form>`).join("");
+        box.querySelectorAll("form").forEach(form => form.addEventListener("submit", async event => {
+          event.preventDefault(); const message = document.getElementById("limit-message");
+          const value = Number(form.elements.limit_people.value);
+          try {
+            const response = await fetch("/api/alert-limits", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ queue_name: form.dataset.queue, limit_people: value })
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Save failed");
+            message.textContent = `Saved ${form.dataset.queue}: ${value} people.`;
+            message.className = "integration-message success";
+            updateDashboard();
+          } catch (error) {
+            message.textContent = error.message;
+            message.className = "integration-message error";
+          }
+        }));
+      } catch (error) {
+        box.innerHTML = `<p class="integration-error">${escapeHtml(error.message)}</p>`;
+      }
+    }
+
+    async function loadAttendance() {
+      const rows = document.getElementById("attendance-rows");
+      const search = document.getElementById("attendance-search").value.trim();
+      try {
+        const response = await fetch(`/api/attendance?limit=200&search=${encodeURIComponent(search)}`, { cache: "no-store" });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Unable to load attendance");
+        const summary = data.summary || {};
+        const values = [summary.total_events || 0, summary.total_entries || 0, summary.total_exits || 0, summary.unique_students || 0];
+        document.getElementById("attendance-summary").innerHTML = ["Total scans", "Entries", "Exits", "Students"].map((label, i) => `<div><span>${label}</span><strong>${values[i]}</strong></div>`).join("");
+        const events = data.events || [];
+        rows.innerHTML = events.length ? events.map(e => `<tr><td>${escapeHtml(e.event_time || "")}</td><td><strong>${escapeHtml(e.student_name || "Unknown")}</strong></td><td>${escapeHtml(e.roll_number || "—")}</td><td><code>${escapeHtml(e.card_uid || "")}</code></td><td><span class="event-badge ${String(e.event_type).toLowerCase()}">${escapeHtml(e.event_type || "")}</span></td></tr>`).join("") : '<tr><td colspan="5">No attendance records found.</td></tr>';
+        document.getElementById("attendance-message").textContent = `${events.length} records`;
+      } catch (error) {
+        rows.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`;
+      }
+    }
+
+    async function refreshArduinoStatus() {
+      const label = document.getElementById("arduino-status");
+      try {
+        const response = await fetch("/api/arduino/status", { cache: "no-store" });
+        const data = await response.json();
+        label.textContent = data.connected ? `Connected · ${data.port || "USB"}${data.alert_active ? " · BUZZER SOUNDING!" : ""}` : `Arduino disconnected${data.port ? " · " + data.port : ""}`;
+        label.className = "chart-tag " + (data.connected ? "connected" : "disconnected") + (data.alert_active ? " status-red" : "");
+        label.title = data.last_error || "";
+      } catch (e) {
+        label.textContent = "Arduino status unavailable";
+      }
+    }
+
+    document.getElementById("refresh-attendance").addEventListener("click", loadAttendance);
+    document.getElementById("attendance-search").addEventListener("input", () => {
+      clearTimeout(window.attendanceSearchTimer);
+      window.attendanceSearchTimer = setTimeout(loadAttendance, 250);
+    });
+
+    // Initial loads
+    loadAlertLimits();
+    loadAttendance();
+    refreshArduinoStatus();
+    refreshHistoryFilters();
+    updateDashboard();
+    updateClock();
+
+    // Auto-refresh timers
+    setInterval(updateDashboard, 1000);
+    setInterval(updateClock, 1000);
+    setInterval(loadAttendance, 5000);
+    setInterval(refreshArduinoStatus, 3000);
+    setInterval(refreshHistoryFilters, 30000);
+  </script>
 </body>
+
 </html>

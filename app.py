@@ -1,113 +1,81 @@
 from flask import Flask, render_template, jsonify, Response, request
 from pathlib import Path
-from datetime import datetime, timedelta
 import time
-
-from database import (
-    get_queue_statistics,
-    get_queue_history,
-    get_queue_history_summary,
-    get_historical_videos,
-    get_historical_queue_names
-)
+from database import (get_queue_statistics, get_attendance_events, get_attendance_summary,
+                      get_queue_alert_limits, save_queue_alert_limit,
+                      get_queue_history, get_queue_history_summary,
+                      get_historical_videos, get_historical_queue_names)
+from arduino_queue_bridge import bridge
 
 app = Flask(__name__)
-
 BASE_DIR = Path(__file__).resolve().parent
 LIVE_FRAME_PATH = BASE_DIR / "static" / "live_frame.jpg"
-
 SERVICE_SECONDS_PER_PERSON = 25
 
 
-# =========================================================
-# HOME PAGE
-# =========================================================
-
 @app.route("/")
-def index():
+def dashboard():
     return render_template("index.html")
 
 
-# =========================================================
-# LIVE QUEUE STATISTICS
-# =========================================================
-
 @app.route("/api/stats")
-def api_stats():
+def get_stats():
     queues = get_queue_statistics()
+    shortest = None
+    shortest_wait = None
+    limits = get_queue_alert_limits()
+    lower_limits = {str(k).strip().lower(): v for k, v in limits.items()}
 
-    for stats in queues.values():
-        occupancy = max(
-            0,
-            int(stats.get("occupancy", 0) or 0)
-        )
+    for name, stats in queues.items():
+        occ = max(0, int(stats.get("occupancy", 0) or 0))
+        wait = occ * SERVICE_SECONDS_PER_PERSON
+        stats["estimated_wait_seconds"] = wait
 
-        stats["estimated_wait_seconds"] = (
-            occupancy * SERVICE_SECONDS_PER_PERSON
-        )
+        clean = str(name).strip().lower()
+        limit_info = limits.get(name) or lower_limits.get(clean)
+        if not limit_info:
+            for lk, lv in lower_limits.items():
+                if clean in lk or lk in clean:
+                    limit_info = lv
+                    break
 
-    recommended_queue = (
-        min(
-            queues,
-            key=lambda name: queues[name].get("occupancy", 0)
-        )
-        if queues
-        else None
-    )
+        limit_val = int(limit_info.get("limit_people", 5)) if limit_info else 5
+        stats["alert_limit"] = limit_val
+        stats["alert_active"] = occ > limit_val
 
-    recommended_wait_seconds = (
-        queues[recommended_queue]["estimated_wait_seconds"]
-        if recommended_queue
-        else None
-    )
+        # 3-color status: RED (exceeds limit), YELLOW (near limit), GREEN (normal)
+        if occ > limit_val:
+            stats["status_color"] = "red"
+            stats["status_text"] = "OVER LIMIT"
+        elif occ >= max(1, limit_val - 1) and occ > 0:
+            stats["status_color"] = "yellow"
+            stats["status_text"] = "NEAR LIMIT"
+        else:
+            stats["status_color"] = "green"
+            stats["status_text"] = "NORMAL"
 
-    # Monitoring is active only if a queue was updated within the last 30 seconds.
-    monitoring_active = False
-    if queues:
-        now_dt = datetime.now().astimezone()
-        threshold = now_dt - timedelta(seconds=30)
-        for stats in queues.values():
-            updated_at = stats.get("updated_at")
-            if updated_at:
-                try:
-                    dt = datetime.fromisoformat(updated_at)
-                    if dt.tzinfo is None:
-                        dt = dt.astimezone()
-                    if dt >= threshold:
-                        monitoring_active = True
-                        break
-                except (ValueError, TypeError):
-                    pass
+        if shortest_wait is None or wait < shortest_wait:
+            shortest_wait = wait
+            shortest = name
 
+    bridge.update_hardware_alerts(queues)
     return jsonify({
         "queues": queues,
-        "recommended_queue": recommended_queue,
-        "recommended_wait_seconds": recommended_wait_seconds,
-        "monitoring": monitoring_active
+        "recommended_queue": shortest,
+        "recommended_wait_seconds": shortest_wait,
+        "monitoring": bool(queues),
+        "alert_limits": limits,
+        "arduino": bridge.status()
     })
 
-
-# =========================================================
-# QUEUE HISTORY
-# =========================================================
 
 @app.route("/api/history")
 def api_history():
     try:
-        hours = max(
-            1,
-            min(int(request.args.get("hours", 24)), 8760)
-        )
-
-        limit = max(
-            1,
-            min(int(request.args.get("limit", 1000)), 10000)
-        )
-
+        hours = max(1, min(int(request.args.get("hours", 24)), 8760))
+        limit = max(1, min(int(request.args.get("limit", 1000)), 10000))
     except ValueError:
-        return jsonify({
-            "error": "hours and limit must be integers"
-        }), 400
+        return jsonify({"error": "hours and limit must be integers"}), 400
 
     records = get_queue_history(
         queue_name=request.args.get("queue") or None,
@@ -116,147 +84,137 @@ def api_history():
         video_hash=request.args.get("video_hash") or None,
         session_id=request.args.get("session_id") or None
     )
+    return jsonify({"history": records})
 
-    return jsonify({
-        "history": records
-    })
-
-
-# =========================================================
-# HISTORY SUMMARY
-# =========================================================
 
 @app.route("/api/history/summary")
 def api_history_summary():
     try:
-        hours = max(
-            1,
-            min(int(request.args.get("hours", 24)), 8760)
-        )
-
+        hours = max(1, min(int(request.args.get("hours", 24)), 8760))
     except ValueError:
-        return jsonify({
-            "error": "hours must be an integer"
-        }), 400
+        return jsonify({"error": "hours must be an integer"}), 400
 
     summary = get_queue_history_summary(
         hours=hours,
         video_hash=request.args.get("video_hash") or None,
         session_id=request.args.get("session_id") or None
     )
+    return jsonify({"summary": summary})
 
-    return jsonify({
-        "summary": summary
-    })
-
-
-# =========================================================
-# HISTORICAL VIDEOS
-# =========================================================
 
 @app.route("/api/history/videos")
 def api_history_videos():
-    try:
-        hours = max(
-            1,
-            min(int(request.args.get("hours", 24)), 8760)
-        )
-
-    except ValueError:
-        return jsonify({
-            "error": "hours must be an integer"
-        }), 400
+    raw_hours = request.args.get("hours")
+    if raw_hours and raw_hours.lower() not in ("all", "0", ""):
+        try:
+            hours = max(1, min(int(raw_hours), 8760))
+        except ValueError:
+            return jsonify({"error": "hours must be an integer"}), 400
+    else:
+        hours = None
 
     videos = get_historical_videos(hours=hours)
+    return jsonify({"videos": videos})
 
-    return jsonify({
-        "videos": videos
-    })
-
-
-# =========================================================
-# HISTORICAL QUEUE NAMES
-# =========================================================
 
 @app.route("/api/history/queues")
 def api_history_queues():
     try:
-        hours = max(
-            1,
-            min(int(request.args.get("hours", 24)), 8760)
-        )
-
+        hours = max(1, min(int(request.args.get("hours", 24)), 8760))
     except ValueError:
-        return jsonify({
-            "error": "hours must be an integer"
-        }), 400
+        return jsonify({"error": "hours must be an integer"}), 400
 
     queues = get_historical_queue_names(
         video_hash=request.args.get("video_hash") or None,
         hours=hours
     )
+    return jsonify({"queues": queues})
 
+
+@app.route("/api/attendance")
+def attendance():
+    try:
+        limit = int(request.args.get("limit", 200))
+    except ValueError:
+        limit = 200
     return jsonify({
-        "queues": queues
+        "events": get_attendance_events(limit, request.args.get("search")),
+        "summary": get_attendance_summary()
     })
 
 
-# =========================================================
-# OPTIMIZED LIVE VIDEO STREAM
-# =========================================================
+@app.route("/api/alert-limits", methods=["GET", "POST"])
+def alert_limits():
+    if request.method == "GET":
+        limits = get_queue_alert_limits()
+        for queue_name in get_queue_statistics():
+            if queue_name not in limits:
+                limits[queue_name] = save_queue_alert_limit(queue_name, 5)
+        return jsonify({"limits": limits})
+    data = request.get_json(silent=True) or {}
+    try:
+        saved = save_queue_alert_limit(data.get("queue_name", ""), data.get("limit_people"))
+        return jsonify({"success": True, "limit": saved})
+    except (TypeError, ValueError) as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
+
+@app.route("/api/queue-occupancy", methods=["POST"])
+def receive_queue_occupancy():
+    data = request.get_json(silent=True) or {}
+    queues = data.get("queues", {})
+    if not isinstance(queues, dict):
+        return jsonify({"success": False, "error": "queues must be an object"}), 400
+    bridge.update_hardware_alerts(queues)
+    return jsonify({"success": True, "arduino": bridge.status()})
+
+
+@app.route("/api/arduino/status")
+def arduino_status():
+    return jsonify(bridge.status())
+
 
 def generate_video_stream():
     last_mtime = None
-
-    while True:
+    # Yield initial frame immediately upon client connection if it exists
+    if LIVE_FRAME_PATH.exists():
         try:
-            # Wait if the live frame does not exist yet.
-            if not LIVE_FRAME_PATH.exists():
-                time.sleep(0.02)
-                continue
-
-            # Check whether a new frame has been produced.
-            current_mtime = LIVE_FRAME_PATH.stat().st_mtime_ns
-
-            # Avoid repeatedly sending the same frame.
-            if current_mtime == last_mtime:
-                time.sleep(0.01)
-                continue
-
-            # Read the latest JPEG frame.
-            frame = LIVE_FRAME_PATH.read_bytes()
-
-            # Verify that the frame is a valid JPEG.
-            if (
-                len(frame) > 4
-                and frame.startswith(b"\xff\xd8")
-                and frame.endswith(b"\xff\xd9")
-            ):
+            with open(LIVE_FRAME_PATH, "rb") as f:
+                initial_frame = f.read()
+            if len(initial_frame) > 4 and initial_frame.startswith(b"\xff\xd8"):
+                last_mtime = LIVE_FRAME_PATH.stat().st_mtime_ns
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: "
-                    + str(len(frame)).encode()
-                    + b"\r\n"
+                    b"Content-Length: " + str(len(initial_frame)).encode() + b"\r\n"
                     b"Cache-Control: no-cache\r\n\r\n"
-                    + frame
-                    + b"\r\n"
+                    + initial_frame + b"\r\n"
                 )
+        except Exception:
+            pass
 
-                last_mtime = current_mtime
+    while True:
+        try:
+            if LIVE_FRAME_PATH.exists():
+                mtime = LIVE_FRAME_PATH.stat().st_mtime_ns
+                if mtime != last_mtime:
+                    with open(LIVE_FRAME_PATH, "rb") as f:
+                        frame = f.read()
+                    if len(frame) > 4 and frame.startswith(b"\xff\xd8"):
+                        last_mtime = mtime
+                        yield (
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n"
+                            b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
+                            b"Cache-Control: no-cache\r\n\r\n"
+                            + frame + b"\r\n"
+                        )
+        except (FileNotFoundError, PermissionError, OSError):
+            pass
+        except Exception as e:
+            print("Video stream error:", e)
+        time.sleep(0.03)
 
-        except (FileNotFoundError, PermissionError):
-            # The monitoring process may be updating the image.
-            time.sleep(0.01)
-
-        except OSError as error:
-            print("Video stream error:", error)
-            time.sleep(0.02)
-
-
-# =========================================================
-# VIDEO FEED ROUTE
-# =========================================================
 
 @app.route("/video_feed")
 def video_feed():
@@ -271,14 +229,29 @@ def video_feed():
     )
 
 
-# =========================================================
-# RUN FLASK APPLICATION
-# =========================================================
+@app.route("/api/live-frame")
+def api_live_frame():
+    try:
+        if LIVE_FRAME_PATH.exists():
+            with open(LIVE_FRAME_PATH, "rb") as f:
+                frame = f.read()
+            if len(frame) > 4 and frame.startswith(b"\xff\xd8"):
+                return Response(
+                    frame,
+                    mimetype="image/jpeg",
+                    headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache"
+                    }
+                )
+    except Exception:
+        pass
+    return ("", 204)
+
 
 if __name__ == "__main__":
-    app.run(
-        host="127.0.0.1",
-        port=5000,
-        debug=False,
-        threaded=True
-    )
+    bridge.start()
+    try:
+        app.run(host="127.0.0.1", port=5000, debug=False, threaded=True, use_reloader=False)
+    finally:
+        bridge.close()

@@ -17,8 +17,8 @@ class QueueManager:
     def __init__(
         self,
         queue_names,
-        confirmation_seconds=2.5,
-        exit_confirmation_seconds=1.5,
+        confirmation_seconds=0.4,
+        exit_confirmation_seconds=0.8,
         lost_track_timeout=5.0,
     ):
         self.queue_names = list(queue_names)

@@ -1,4 +1,4 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
 
 :root {
   --bg:#0b1020;--sidebar:#0d1425;--panel:#121b2e;--border:rgba(155,174,208,0.13);
@@ -6,7 +6,7 @@
 }
 *{box-sizing:border-box;}
 html{scroll-behavior:smooth;}
-body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;}
 button,select,input{font:inherit;}
 button{cursor:pointer;}
 a{text-decoration:none;color:inherit;}
@@ -121,11 +121,27 @@ code{color:#8ceadd;background:rgba(54,214,197,.08);padding:2px 5px;border-radius
 /* ---- QUEUE CARDS ---- */
 .queues-panel{margin-bottom:19px;}
 .queue-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;align-items:start;}
-.queue-card{padding:18px;background:rgba(9,16,30,.52);border:1px solid var(--border);border-radius:14px;min-width:0;transition:border-color .3s ease,box-shadow .3s ease;}
-.queue-card.overcrowded{border:2px solid #ff3434!important;background:linear-gradient(145deg,rgba(120,15,25,.34),rgba(20,25,40,.98))!important;box-shadow:0 0 18px rgba(255,45,45,.25);}
-.queue-card.overcrowded .queue-occupancy strong{color:#ff5252!important;}
-.overcrowded-badge{display:none;color:#fff;background:#d92332;border-radius:6px;padding:5px 8px;font-size:10px;font-weight:800;letter-spacing:.4px;}
-.queue-card.overcrowded .overcrowded-badge{display:inline-block;}
+.queue-card{padding:18px;background:rgba(9,16,30,.52);border:1px solid var(--border);border-radius:14px;min-width:0;transition:border-color .3s ease,box-shadow .3s ease,background .3s ease;}
+
+/* 3-COLOR QUEUE STATUS */
+.queue-card.status-green{border:1px solid rgba(88,214,163,.45);background:linear-gradient(145deg,rgba(16,36,28,.65),rgba(15,22,38,.98));}
+.queue-card.status-green .queue-status-tag{color:#58d6a3;background:rgba(88,214,163,.14);border:1px solid rgba(88,214,163,.28);}
+.queue-card.status-green .occupancy-track span{background:#58d6a3;}
+
+.queue-card.status-yellow{border:1.5px solid rgba(255,182,109,.7);background:linear-gradient(145deg,rgba(48,34,16,.65),rgba(15,22,38,.98));box-shadow:0 0 16px rgba(255,182,109,.15);}
+.queue-card.status-yellow .queue-occupancy strong{color:#ffb66d;}
+.queue-card.status-yellow .queue-status-tag{color:#ffb66d;background:rgba(255,182,109,.15);border:1px solid rgba(255,182,109,.32);}
+.queue-card.status-yellow .occupancy-track span{background:#ffb66d;}
+
+.queue-card.status-red{border:2px solid #ff4d4f!important;background:linear-gradient(145deg,rgba(70,16,22,.8),rgba(15,22,38,.98))!important;box-shadow:0 0 22px rgba(255,77,79,.35);animation:cardAlarmPulse 1.4s ease-in-out infinite alternate;}
+.queue-card.status-red .queue-occupancy strong{color:#ff4d4f!important;}
+.queue-card.status-red .queue-status-tag{color:#fff;background:#d92332;border:1px solid #ff4d4f;font-weight:800;animation:badgePulse 1s infinite alternate;}
+.queue-card.status-red .occupancy-track span{background:#ff4d4f;}
+
+@keyframes cardAlarmPulse{from{box-shadow:0 0 8px rgba(255,77,79,.2)}to{box-shadow:0 0 24px rgba(255,77,79,.45)}}
+@keyframes badgePulse{from{opacity:0.85}to{opacity:1}}
+
+.queue-status-tag{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:700;letter-spacing:.4px;padding:3px 8px;border-radius:20px;text-transform:uppercase;}
 .queue-card-top{display:flex;align-items:center;gap:10px;}
 .queue-symbol{width:36px;height:36px;flex-shrink:0;display:grid;place-items:center;border-radius:10px;font:700 12px 'Manrope',sans-serif;}
 .queue-title{min-width:0;flex:1;}
@@ -174,10 +190,11 @@ code{color:#8ceadd;background:rgba(54,214,197,.08);padding:2px 5px;border-radius
 /* ---- HISTORY CHART ---- */
 .chart-container{height:300px;position:relative;margin-bottom:20px;}
 
-/* ---- TABLE ---- */
-.table-container{overflow-x:auto;}
+/* ---- TABLE WITH SIDE SCROLLBAR ---- */
+.table-container{max-height:360px;overflow-y:auto;overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:rgba(11,17,30,.65);}
 table{width:100%;border-collapse:collapse;min-width:580px;}
-thead{background:rgba(54,214,197,.05);}
+.table-container thead{position:sticky;top:0;z-index:3;background:#141f35;box-shadow:0 1px 0 var(--border);}
+thead{background:rgba(54,214,197,.08);}
 th,td{padding:12px;text-align:left;border-bottom:1px solid var(--border);font-size:11px;}
 th{color:#a6b5cb;font-weight:700;white-space:nowrap;}
 td{color:#cbd6e8;}
@@ -224,4 +241,227 @@ tbody tr:hover{background:rgba(54,214,197,.035);}
 @media(max-width:480px){
   .metric-grid{grid-template-columns:1fr 1fr;}
   .queue-grid{grid-template-columns:1fr;}
+}
+
+/* ==========================================================================
+   QueueSense Arduino & RFID Attendance Integration Styles
+   ========================================================================== */
+
+/* QueueSense Arduino/RFID integration additions */
+.integration-panel {
+  margin-top: 22px;
+  padding: 22px
+}
+
+.integration-help {
+  color: #9aa9bf;
+  line-height: 1.6;
+  margin: 4px 0 18px
+}
+
+.limit-controls {
+  display: grid;
+  gap: 10px
+}
+
+.limit-form {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 110px auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(150, 165, 190, .16);
+  border-radius: 12px
+}
+
+.limit-form label {
+  font-weight: 600
+}
+
+.limit-form label span {
+  display: block;
+  font-size: 12px;
+  font-weight: 400;
+  color: #8592a8;
+  margin-top: 4px
+}
+
+.limit-form input,
+.attendance-tools input {
+  background: #111a2b;
+  color: inherit;
+  border: 1px solid #34445c;
+  border-radius: 8px;
+  padding: 10px;
+  min-width: 0
+}
+
+.limit-form button,
+.refresh-button {
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  background: #36d6c5;
+  color: #07131d
+}
+
+.integration-message {
+  min-height: 20px;
+  margin-top: 10px;
+  color: #9aa9bf
+}
+
+.integration-message.success {
+  color: #36d6a0
+}
+
+.integration-message.error,
+.integration-error {
+  color: #ff7777
+}
+
+.chart-tag.connected {
+  color: #36d6a0
+}
+
+.chart-tag.disconnected {
+  color: #ff9c75
+}
+
+.attendance-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0
+}
+
+.attendance-summary div {
+  padding: 15px;
+  border-radius: 10px;
+  background: rgba(54, 214, 197, .07);
+  border: 1px solid rgba(54, 214, 197, .15)
+}
+
+.attendance-summary span {
+  display: block;
+  color: #8592a8;
+  font-size: 12px
+}
+
+.attendance-summary strong {
+  display: block;
+  font-size: 24px;
+  margin-top: 7px
+}
+
+.attendance-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px
+}
+
+.attendance-tools input {
+  width: min(100%, 380px)
+}
+
+.table-scroll {
+  max-height: 360px;
+  overflow-y: auto;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(11, 17, 30, .65);
+}
+
+.table-scroll thead {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #141f35;
+  box-shadow: 0 1px 0 var(--border);
+}
+
+/* SLEEK CUSTOM SCROLLBARS */
+.table-scroll::-webkit-scrollbar,
+.table-container::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.table-scroll::-webkit-scrollbar-track,
+.table-container::-webkit-scrollbar-track {
+  background: rgba(14, 21, 37, 0.7);
+  border-radius: 4px;
+}
+
+.table-scroll::-webkit-scrollbar-thumb,
+.table-container::-webkit-scrollbar-thumb {
+  background: #2a3b56;
+  border-radius: 4px;
+}
+
+.table-scroll::-webkit-scrollbar-thumb:hover,
+.table-container::-webkit-scrollbar-thumb:hover {
+  background: #36d6c5;
+}
+
+.attendance-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: 13px
+}
+
+.attendance-table th,
+.attendance-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(150, 165, 190, .13);
+  white-space: nowrap
+}
+
+.attendance-table th {
+  color: #8592a8;
+  font-weight: 600
+}
+
+.event-badge {
+  padding: 4px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  background: rgba(150, 165, 190, .12)
+}
+
+.event-badge.entry {
+  color: #36d6a0
+}
+
+.event-badge.exit {
+  color: #ffbf69
+}
+
+.event-badge.unknown {
+  color: #ff7777
+}
+
+@media(max-width:700px) {
+  .limit-form {
+    grid-template-columns: 1fr 85px auto
+  }
+
+  .limit-form label {
+    grid-column: 1/-1
+  }
+
+  .attendance-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr))
+  }
+
+  .attendance-tools {
+    align-items: stretch;
+    flex-direction: column
+  }
 }

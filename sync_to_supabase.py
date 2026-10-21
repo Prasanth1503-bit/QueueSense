@@ -19,6 +19,9 @@ def sync_data():
     print("  QueueSense - Local SQLite to Supabase Cloud Sync")
     print("=" * 60)
 
+    # Force PostgreSQL connection for cloud syncing regardless of local offline setting
+    os.environ["USE_SQLITE"] = "0"
+
     if not database.DATABASE_PATH.exists():
         print(f"[-] No local database found at: {database.DATABASE_PATH}")
         return
@@ -35,7 +38,8 @@ def sync_data():
         with database.get_connection() as cloud_conn:
             if not cloud_conn.is_pg:
                 print("[-] Could not establish PostgreSQL connection to Supabase.")
-                print(f"    Error: {database._last_pg_error or 'Unknown error'}")
+                print("    Please check that your laptop is connected to the internet.")
+                print(f"    Details: {database._last_pg_error or 'Connection failed'}")
                 return
 
             with sqlite3.connect(str(database.DATABASE_PATH)) as local_conn:

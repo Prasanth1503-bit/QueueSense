@@ -528,7 +528,8 @@ with tab_limits:
     st.markdown("Configure max capacity per queue. When occupancy exceeds these limits, the Arduino buzzer triggers.")
 
     current_limits = get_queue_alert_limits()
-    all_queue_names = sorted(list(set(list(queues.keys()) + list(current_limits.keys()) + ["student", "faculty", "scholar"])))
+    # The three canonical monitored queues
+    all_queue_names = ["student", "faculty", "scholar"]
 
     with st.form("alert_limits_form"):
         updated_values = {}

@@ -2,10 +2,18 @@ import os
 import time
 from pathlib import Path
 from flask import Flask, render_template, jsonify, Response, request
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass
+
 from database import (get_queue_statistics, get_attendance_events, get_attendance_summary,
                       get_queue_alert_limits, save_queue_alert_limit,
                       get_queue_history, get_queue_history_summary,
-                      get_historical_videos, get_historical_queue_names)
+                      get_historical_videos, get_historical_queue_names,
+                      get_live_frame, get_hardware_status)
 from arduino_queue_bridge import bridge
 
 app = Flask(__name__)
@@ -172,11 +180,17 @@ def receive_queue_occupancy():
 
 @app.route("/api/arduino/status")
 def arduino_status():
-    return jsonify(bridge.status())
+    st = bridge.status()
+    if not st.get("connected"):
+        cloud_st = get_hardware_status()
+        if cloud_st.get("is_online"):
+            return jsonify(cloud_st)
+    return jsonify(st)
 
 
 def generate_video_stream():
     last_mtime = None
+    last_cloud_ts = None
     # Yield initial frame immediately upon client connection if it exists
     if LIVE_FRAME_PATH.exists():
         try:
@@ -210,6 +224,19 @@ def generate_video_stream():
                             b"Cache-Control: no-cache\r\n\r\n"
                             + frame + b"\r\n"
                         )
+            else:
+                # Cloud frame fallback
+                c_frame, c_ts = get_live_frame()
+                if c_frame and c_ts != last_cloud_ts:
+                    last_cloud_ts = c_ts
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(c_frame)).encode() + b"\r\n"
+                        b"Cache-Control: no-cache\r\n\r\n"
+                        + c_frame + b"\r\n"
+                    )
+                time.sleep(0.5)
         except (FileNotFoundError, PermissionError, OSError):
             pass
         except Exception as e:
@@ -239,6 +266,17 @@ def api_live_frame():
             if len(frame) > 4 and frame.startswith(b"\xff\xd8"):
                 return Response(
                     frame,
+                    mimetype="image/jpeg",
+                    headers={
+                        "Cache-Control": "no-cache, no-store, must-revalidate",
+                        "Pragma": "no-cache"
+                    }
+                )
+        else:
+            c_frame, _ = get_live_frame()
+            if c_frame:
+                return Response(
+                    c_frame,
                     mimetype="image/jpeg",
                     headers={
                         "Cache-Control": "no-cache, no-store, must-revalidate",

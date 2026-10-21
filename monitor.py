@@ -9,12 +9,18 @@ from pathlib import Path
 from ultralytics import YOLO
 
 from src.queue_manager import QueueManager
-from database import save_queue_statistics, reset_queue_status
+from database import save_queue_statistics, reset_queue_status, update_live_frame
 import json
 import urllib.request
 import urllib.error
 import threading
 import queue
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass
 
 # Asynchronous non-blocking sender for Flask occupancy push
 occupancy_queue = queue.Queue(maxsize=2)
@@ -39,6 +45,90 @@ def async_occupancy_worker():
 
 
 threading.Thread(target=async_occupancy_worker, daemon=True).start()
+
+
+# Asynchronous non-blocking worker for database writes (prevents remote cloud DB lag on video loop)
+db_sync_queue = queue.Queue(maxsize=1)
+
+
+def async_db_worker():
+    while True:
+        try:
+            item = db_sync_queue.get()
+            if item is None:
+                break
+            stats, save_hist, v_hash, s_id, v_name = item
+            save_queue_statistics(
+                stats,
+                save_history=save_hist,
+                video_hash=v_hash,
+                session_id=s_id,
+                video_name=v_name
+            )
+        except Exception:
+            pass
+
+
+threading.Thread(target=async_db_worker, daemon=True).start()
+
+
+# Asynchronous non-blocking worker for local disk frame writing & cloud frame publishing
+frame_sync_queue = queue.Queue(maxsize=1)
+
+
+def async_frame_worker():
+    last_cloud_upload = 0.0
+    while True:
+        try:
+            frame_img = frame_sync_queue.get()
+            if frame_img is None:
+                break
+            h, w = frame_img.shape[:2]
+            if w > 960:
+                dash_scale = 960 / w
+                dash_frame = cv2.resize(frame_img, (960, int(h * dash_scale)), interpolation=cv2.INTER_AREA)
+            else:
+                dash_frame = frame_img
+
+            encoded_ok, encoded_frame = cv2.imencode(
+                ".jpg",
+                dash_frame,
+                [cv2.IMWRITE_JPEG_QUALITY, 70]
+            )
+
+            if encoded_ok:
+                frame_bytes = encoded_frame.tobytes()
+                temporary_frame = LIVE_FRAME_PATH.with_suffix(".tmp.jpg")
+                try:
+                    temporary_frame.write_bytes(frame_bytes)
+                    temporary_frame.replace(LIVE_FRAME_PATH)
+                except (PermissionError, OSError):
+                    try:
+                        with open(LIVE_FRAME_PATH, "wb") as f:
+                            f.write(frame_bytes)
+                    except (PermissionError, OSError):
+                        pass
+
+                # Publish to Cloud Database for Streamlit Cloud live viewing (~1 FPS)
+                now_c = time.monotonic()
+                if now_c - last_cloud_upload >= 1.0:
+                    last_cloud_upload = now_c
+                    if w > 640:
+                        c_scale = 640 / w
+                        cloud_frame = cv2.resize(frame_img, (640, int(h * c_scale)), interpolation=cv2.INTER_AREA)
+                    else:
+                        cloud_frame = frame_img
+                    c_ok, c_enc = cv2.imencode(".jpg", cloud_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                    if c_ok:
+                        try:
+                            update_live_frame(c_enc.tobytes())
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+
+threading.Thread(target=async_frame_worker, daemon=True).start()
 
 
 # ============================================
@@ -910,28 +1000,43 @@ try:
             except queue.Full:
                 pass
 
-        # Save current statistics to the database periodically (twice a second).
+        # Enqueue statistics for background DB saving without stalling OpenCV video loop.
         if now - last_status_save >= STATUS_SAVE_INTERVAL:
-            save_queue_statistics(
-                statistics,
-                video_hash=video_hash,
-                session_id=session_id,
-                video_name=video_name
-            )
             last_status_save = now
+            if not db_sync_queue.empty():
+                try:
+                    db_sync_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            try:
+                db_sync_queue.put_nowait((
+                    statistics.copy(),
+                    False,
+                    video_hash,
+                    session_id,
+                    video_name
+                ))
+            except queue.Full:
+                pass
 
-        # Save historical snapshots every 5 seconds.
+        # Enqueue historical snapshots every 5 seconds.
         if now - last_history_save >= HISTORY_SAVE_INTERVAL:
-
-            save_queue_statistics(
-                statistics,
-                save_history=True,
-                video_hash=video_hash,
-                session_id=session_id,
-                video_name=video_name
-            )
-
             last_history_save = now
+            if not db_sync_queue.empty():
+                try:
+                    db_sync_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            try:
+                db_sync_queue.put_nowait((
+                    statistics.copy(),
+                    True,
+                    video_hash,
+                    session_id,
+                    video_name
+                ))
+            except queue.Full:
+                pass
 
         # Draw queue polygons and labels.
         for index, polygon in enumerate(
@@ -1008,35 +1113,19 @@ try:
             2
         )
 
-        # Encode the frame for the Flask dashboard (smooth 25 FPS cap, non-blocking on Windows).
+        # Dispatch the frame to the background worker (smooth 25 FPS cap, zero disk/network stalls on video loop).
         now_ts = time.monotonic()
         if now_ts - last_dashboard_frame_time >= 0.04:
             last_dashboard_frame_time = now_ts
-
-            dash_frame = output
-            h, w = output.shape[:2]
-            if w > 960:
-                dash_scale = 960 / w
-                dash_frame = cv2.resize(output, (960, int(h * dash_scale)), interpolation=cv2.INTER_AREA)
-
-            encoded_ok, encoded_frame = cv2.imencode(
-                ".jpg",
-                dash_frame,
-                [cv2.IMWRITE_JPEG_QUALITY, 70]
-            )
-
-            if encoded_ok:
-                frame_bytes = encoded_frame.tobytes()
-                temporary_frame = LIVE_FRAME_PATH.with_suffix(".tmp.jpg")
+            if not frame_sync_queue.empty():
                 try:
-                    temporary_frame.write_bytes(frame_bytes)
-                    temporary_frame.replace(LIVE_FRAME_PATH)
-                except (PermissionError, OSError):
-                    try:
-                        with open(LIVE_FRAME_PATH, "wb") as f:
-                            f.write(frame_bytes)
-                    except (PermissionError, OSError):
-                        pass
+                    frame_sync_queue.get_nowait()
+                except queue.Empty:
+                    pass
+            try:
+                frame_sync_queue.put_nowait(output.copy())
+            except queue.Full:
+                pass
 
         # Display the OpenCV monitoring window fitted to screen without zooming.
         if monitor_scale < 1.0:

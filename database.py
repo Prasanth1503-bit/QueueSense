@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 try:
     import psycopg2
+    import psycopg2.pool
     from psycopg2.extras import RealDictCursor
 except ImportError:
     psycopg2 = None
@@ -12,7 +13,7 @@ except ImportError:
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    load_dotenv(Path(__file__).resolve().parent / ".env")
 except ImportError:
     pass
 
@@ -40,18 +41,41 @@ def get_postgres_url():
     return url
 
 
-
 _custom_db = os.getenv("QUEUESENSE_DB_PATH") or os.getenv("DATABASE_PATH")
 DATABASE_PATH = Path(_custom_db) if _custom_db else (Path(__file__).resolve().parent / "queuesense.db")
 DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 _last_pg_error = None
+_pg_pool = None
+import threading
+_pool_lock = threading.Lock()
 
 
 def is_postgres():
+    if os.getenv("USE_SQLITE", "").lower() in ("1", "true", "yes"):
+        return False
     url = get_postgres_url()
     return bool(psycopg2 and url and url.startswith(("postgres://", "postgresql://")))
+
+
+def get_pg_pool():
+    global _pg_pool, _last_pg_error
+    if not is_postgres():
+        return None
+    url = get_postgres_url()
+    if not url:
+        return None
+    if _pg_pool is None:
+        with _pool_lock:
+            if _pg_pool is None:
+                try:
+                    _pg_pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=url)
+                    _last_pg_error = None
+                except Exception as exc:
+                    _last_pg_error = str(exc)
+                    return None
+    return _pg_pool
 
 
 def get_db_info():
@@ -108,9 +132,10 @@ class PostgresCursorWrapper:
 
 
 class DBConnectionContext:
-    def __init__(self, raw_conn, is_pg):
+    def __init__(self, raw_conn, is_pg, pool=None):
         self.raw = raw_conn
         self.is_pg = is_pg
+        self.pool = pool
 
     def __enter__(self):
         return self
@@ -121,8 +146,22 @@ class DBConnectionContext:
                 self.raw.commit()
             else:
                 self.raw.rollback()
+        except Exception:
+            pass
         finally:
-            self.raw.close()
+            if self.pool is not None:
+                try:
+                    self.pool.putconn(self.raw)
+                except Exception:
+                    try:
+                        self.raw.close()
+                    except Exception:
+                        pass
+            else:
+                try:
+                    self.raw.close()
+                except Exception:
+                    pass
 
     def execute(self, query, params=None):
         if self.is_pg:
@@ -139,20 +178,31 @@ class DBConnectionContext:
 def get_connection():
     global _last_pg_error
     if is_postgres():
-        try:
-            conn = psycopg2.connect(get_postgres_url())
-            _last_pg_error = None
-            return DBConnectionContext(conn, is_pg=True)
-        except Exception as exc:
-            _last_pg_error = str(exc)
-            # Safe fallback to local SQLite so the system never crashes
-            conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
-            conn.row_factory = sqlite3.Row
-            return DBConnectionContext(conn, is_pg=False)
-    else:
-        conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
-        conn.row_factory = sqlite3.Row
-        return DBConnectionContext(conn, is_pg=False)
+        pool = get_pg_pool()
+        if pool is not None:
+            try:
+                raw_conn = pool.getconn()
+                if getattr(raw_conn, "closed", 0) != 0:
+                    try:
+                        pool.putconn(raw_conn, close=True)
+                    except Exception:
+                        pass
+                    raw_conn = pool.getconn()
+                _last_pg_error = None
+                return DBConnectionContext(raw_conn, is_pg=True, pool=pool)
+            except Exception as exc:
+                _last_pg_error = str(exc)
+        else:
+            try:
+                conn = psycopg2.connect(get_postgres_url())
+                _last_pg_error = None
+                return DBConnectionContext(conn, is_pg=True, pool=None)
+            except Exception as exc:
+                _last_pg_error = str(exc)
+
+    conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
+    conn.row_factory = sqlite3.Row
+    return DBConnectionContext(conn, is_pg=False, pool=None)
 
 
 
@@ -223,6 +273,11 @@ def initialize_database():
         connection.execute("CREATE INDEX IF NOT EXISTS idx_queue_history_name_time ON queue_history(queue_name, recorded_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_queue_history_video_queue ON queue_history(video_hash, queue_name)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_queue_history_session ON queue_history(session_id)")
+        connection.execute("""CREATE TABLE IF NOT EXISTS system_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )""")
 
 
 KNOWN_VIDEO_MAP = {
@@ -502,3 +557,77 @@ try:
     initialize_integration_tables()
 except Exception as _e:
     _last_pg_error = str(_e)
+
+
+def set_system_state(key, value):
+    stamp = current_timestamp()
+    with get_connection() as connection:
+        connection.execute("""INSERT INTO system_state (key, value, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at""",
+            (key, str(value), stamp))
+    return stamp
+
+
+def get_system_state(key, max_age_seconds=None):
+    try:
+        with get_connection() as connection:
+            row = connection.execute("SELECT key, value, updated_at FROM system_state WHERE key = ?", (key,)).fetchone()
+        if not row:
+            return None
+        val = row["value"]
+        upd = row["updated_at"]
+        if max_age_seconds is not None:
+            try:
+                ts = datetime.fromisoformat(upd)
+                now = datetime.now().astimezone()
+                if (now - ts).total_seconds() > max_age_seconds:
+                    return None
+            except Exception:
+                pass
+        return {"key": key, "value": val, "updated_at": upd}
+    except Exception:
+        return None
+
+
+def update_live_frame(frame_bytes):
+    """Save latest video frame thumbnail (JPEG bytes encoded to base64) to database for cloud preview."""
+    import base64
+    b64_str = base64.b64encode(frame_bytes).decode("ascii")
+    set_system_state("live_frame", b64_str)
+
+
+def get_live_frame():
+    """Retrieve the latest live frame from system_state, returning (frame_bytes, updated_at) or (None, None)."""
+    import base64
+    st = get_system_state("live_frame")
+    if not st:
+        return None, None
+    try:
+        raw = base64.b64decode(st["value"])
+        return raw, st["updated_at"]
+    except Exception:
+        return None, None
+
+
+def update_hardware_status(status_dict):
+    """Store local Arduino / bridge status into database so cloud dashboards can see it."""
+    import json
+    set_system_state("hardware_status", json.dumps(status_dict))
+
+
+def get_hardware_status():
+    """Fetch hardware status from database with heartbeat liveness check."""
+    import json
+    st = get_system_state("hardware_status")
+    if not st:
+        return {"connected": False, "is_online": False, "port": None, "alert_active": False}
+    try:
+        data = json.loads(st["value"])
+        ts = datetime.fromisoformat(st["updated_at"])
+        is_fresh = (datetime.now().astimezone() - ts).total_seconds() <= 15
+        data["is_online"] = is_fresh and bool(data.get("connected", False))
+        data["last_seen"] = st["updated_at"]
+        return data
+    except Exception:
+        return {"connected": False, "is_online": False, "port": None, "alert_active": False}
+

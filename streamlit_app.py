@@ -20,7 +20,9 @@ from database import (
     get_queue_history,
     get_queue_history_summary,
     get_db_info,
-    is_postgres
+    is_postgres,
+    get_live_frame,
+    get_hardware_status
 )
 
 # Optional hardware bridge import (if running on a machine with serial)
@@ -200,17 +202,27 @@ with st.sidebar:
     
     # Hardware Status
     st.markdown("### 🔌 Hardware Bridge")
+    hw = get_hardware_status()
     if bridge and bridge.connected:
-        st.success(f"Arduino Online ({bridge.port_name})")
+        st.success(f"🟢 Arduino Online ({bridge.port_name})")
         if bridge.alert_active:
             st.error("🚨 BUZZER ACTIVE (Over limit)")
         else:
-            st.info("Buzzer Idle")
+            st.info("Buzzer Idle · Capacity Guard Active")
+    elif hw.get("is_online"):
+        port_label = hw.get("port") or "COM"
+        st.success(f"🟢 Arduino Online ({port_label})")
+        st.caption("⚡ Linked via Local PC Hardware Bridge")
+        if hw.get("alert_active"):
+            st.error("🚨 BUZZER ACTIVE (Over limit)")
+        else:
+            st.info("Buzzer Idle · Capacity Guard Active")
     elif bridge:
-        st.warning("Arduino Not Detected")
-        st.caption("Waiting for USB connection on COM / serial port.")
+        st.warning("⚪ Arduino Offline")
+        st.caption("Plug Arduino into local PC USB and run `run_dashboard.bat`.")
     else:
-        st.info("Cloud Mode (No hardware attached)")
+        st.info("⚪ Hardware Bridge Inactive")
+        st.caption("Run `run_dashboard.bat` locally to link physical Arduino buzzer & RFID.")
 
     st.markdown("---")
     st.caption("QueueSense v2.0 · Streamlit & Supabase Edition")
@@ -388,6 +400,35 @@ with tab_overview:
         </div>
         """, unsafe_allow_html=True)
 
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # RFID Attendance Quick Glance
+    st.markdown("### 🪪 RFID Attendance Quick Glance")
+    recent_events = get_attendance_events(limit=5)
+    ac1, ac2, ac3, ac4 = st.columns(4)
+    with ac1:
+        st.metric("Total Scans", attendance_summary.get("total_events", 0))
+    with ac2:
+        st.metric("Entries (IN)", attendance_summary.get("total_entries", 0))
+    with ac3:
+        st.metric("Exits (OUT)", attendance_summary.get("total_exits", 0))
+    with ac4:
+        st.metric("Unique Students", attendance_summary.get("unique_students", 0))
+    
+    if recent_events:
+        rec_display = []
+        for ev in recent_events:
+            rec_display.append({
+                "Timestamp": ev.get("event_time", "") or "—",
+                "Student Name": ev.get("student_name") or "Unknown",
+                "Roll Number": ev.get("roll_number") or "—",
+                "Card UID": ev.get("card_uid") or "—",
+                "Action": ev.get("event_type") or "—"
+            })
+        st.dataframe(pd.DataFrame(rec_display), use_container_width=True, hide_index=True)
+    else:
+        st.caption("No RFID cards scanned yet. Scan card on RFID reader to see live entries and exits.")
+
 
 
 # ==============================================================================
@@ -397,31 +438,49 @@ with tab_video:
     st.markdown("### Live Camera & YOLO Tracking Feed")
     col_v1, col_v2 = st.columns([3, 1])
     with col_v1:
+        frame_rendered = False
         if LIVE_FRAME_PATH.exists():
             try:
                 mtime = os.path.getmtime(LIVE_FRAME_PATH)
-                st.image(str(LIVE_FRAME_PATH), caption=f"Live Feed · Last update {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
+                st.image(str(LIVE_FRAME_PATH), caption=f"Local YOLO Stream · Last update {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
+                frame_rendered = True
             except Exception as e:
-                st.warning(f"Could not read frame: {e}")
-        else:
+                pass
+        
+        if not frame_rendered:
+            cloud_bytes, cloud_ts = get_live_frame()
+            if cloud_bytes:
+                try:
+                    st.image(cloud_bytes, caption=f"Cloud YOLO Live Stream · Synced from monitor.py ({cloud_ts})", use_container_width=True)
+                    frame_rendered = True
+                except Exception as e:
+                    pass
+
+        if not frame_rendered:
             st.markdown("""
             <div style="background: #1e293b; border-radius: 12px; height: 350px; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #94a3b8;">
                 <div style="font-size: 3rem; margin-bottom: 10px;">📹</div>
                 <strong>Waiting for Video Frames</strong>
-                <p style="font-size: 0.9rem; margin-top: 6px;">Start <code>monitor.py</code> to see annotated live YOLO person detection.</p>
+                <p style="font-size: 0.9rem; margin-top: 6px;">Start <code>monitor.py</code> to stream annotated live YOLO person detection.</p>
             </div>
             """, unsafe_allow_html=True)
+
     with col_v2:
         st.markdown("#### Stream Diagnostics")
-        st.markdown(f"**Frame Path:** `{LIVE_FRAME_PATH.name}`")
-        st.markdown(f"**Status:** {'🟢 Receiving' if LIVE_FRAME_PATH.exists() else '⚪ Waiting'}")
+        has_local = LIVE_FRAME_PATH.exists()
+        cloud_bytes, cloud_ts = get_live_frame()
+        has_cloud = bool(cloud_bytes)
+        status_label = "🟢 Receiving (Local)" if has_local else ("🟢 Receiving (Cloud Sync)" if has_cloud else "⚪ Waiting for Stream")
+        st.markdown(f"**Status:** {status_label}")
+        if cloud_ts:
+            st.markdown(f"**Cloud Timestamp:** `{cloud_ts}`")
         st.markdown("""
         **Detection Legend:**
         - 🟩 Green Box: Tracked Person
         - 🟦 Blue Polygon: Monitored Queue Zone
         - 🟥 Red Highlight: Over-Capacity Queue
         """)
-        if st.button("Capture Instant Snapshot"):
+        if st.button("🔄 Refresh Stream Frame", type="primary", use_container_width=True):
             st.rerun()
 
 # ==============================================================================
@@ -443,8 +502,13 @@ with tab_attendance:
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Search box
-    search_query = st.text_input("🔍 Search by Student Name, Roll Number, or Card UID:", "")
+    # Search box & Refresh
+    col_s1, col_s2 = st.columns([4, 1])
+    with col_s1:
+        search_query = st.text_input("🔍 Search by Student Name, Roll Number, or Card UID:", "", placeholder="Type name, roll, or card UID...", label_visibility="collapsed")
+    with col_s2:
+        if st.button("🔄 Refresh Records", use_container_width=True):
+            st.rerun()
     
     # Attendance events table
     events = get_attendance_events(limit=150, search=search_query)

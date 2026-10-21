@@ -33,7 +33,7 @@ try:
 except ImportError:
     serial = None
 
-from database import save_attendance_event, get_queue_alert_limits
+from database import save_attendance_event, get_queue_alert_limits, update_hardware_status
 
 
 class ArduinoQueueBridge:
@@ -107,6 +107,13 @@ class ArduinoQueueBridge:
                     self.last_error = str(exc)
         return False
 
+    def _sync_cloud_status(self):
+        """Asynchronously sync hardware status to Supabase for cloud dashboards."""
+        try:
+            update_hardware_status(self.status())
+        except Exception:
+            pass
+
     # -------------------------------------------------------------- set_buzzer
     def set_buzzer(self, active):
         """Send BUZZER,ON or BUZZER,OFF only when the state actually changes."""
@@ -116,6 +123,7 @@ class ArduinoQueueBridge:
             cmd = "BUZZER,ON" if active else "BUZZER,OFF"
             self._send(cmd)
             print("[Arduino] Sent:", cmd)
+            self._sync_cloud_status()
 
     # --------------------------------------------------- update_hardware_alerts
     def update_hardware_alerts(self, statistics):
@@ -193,16 +201,23 @@ class ArduinoQueueBridge:
         # ---- Any other line: log and ignore ------------------------------
         print("[Arduino] Ignored:", stripped)
 
-    # -------------------------------------------------------------------- _run
     def _run(self):
         """Background thread: connect, read lines, reconnect on error."""
+        last_heartbeat = 0
         while not self.stop_event.is_set():
+            now_t = time.monotonic()
+            if now_t - last_heartbeat >= 3.0:
+                last_heartbeat = now_t
+                self._sync_cloud_status()
+
             if not self.serial or not self.serial.is_open:
                 self.connected = False
                 self.arduino_ready = False
                 if not self._connect():
                     self.stop_event.wait(3)
                     continue
+                else:
+                    self._sync_cloud_status()
             try:
                 raw = self.serial.readline()
                 if raw:
@@ -217,6 +232,7 @@ class ArduinoQueueBridge:
                 except Exception:
                     pass
                 self.serial = None
+                self._sync_cloud_status()
                 self.stop_event.wait(2)
         self.close()
 
@@ -245,6 +261,7 @@ class ArduinoQueueBridge:
         self.serial = None
         self.connected = False
         self.arduino_ready = False
+        self._sync_cloud_status()
 
 
 bridge = ArduinoQueueBridge()

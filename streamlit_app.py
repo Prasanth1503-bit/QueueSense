@@ -159,16 +159,31 @@ st.markdown("""
         border-radius: 20px;
         font-size: 0.8rem;
         font-weight: 600;
-    /* Stop screen dimming, fading, and flickering during auto-refresh */
+        display: inline-block;
+    }
+    
+    /* Stop screen dimming, fading, and flickering during auto-refresh across ALL containers */
+    .stApp,
+    .main,
+    header,
+    [data-testid="stApp"],
+    [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stAppViewBlockContainer"],
+    [data-testid="stAppViewContainer"],
+    div[data-testid="stAppViewContainer"] > section:first-child,
     .stApp[data-test-script-state="running"] [data-testid="stMainBlockContainer"],
     .stApp[data-test-script-state="running"] .main,
-    .stApp[data-test-script-state="running"] header {
+    .stApp[data-test-script-state="running"] header,
+    .stApp[data-test-script-state="running"] {
         opacity: 1 !important;
         filter: none !important;
         transition: none !important;
+        animation: none !important;
     }
+    
     div[data-testid="stStatusWidget"] {
-        display: none !important;
+        visibility: hidden !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -240,9 +255,16 @@ with col_head2:
 
 
 # Fetch latest data
-queues = get_queue_statistics()
+queues = get_queue_statistics(max_age_seconds=15)
 limits = get_queue_alert_limits()
 attendance_summary = get_attendance_summary()
+
+# Auto-start hardware bridge if running locally on a system with serial
+if bridge and not bridge.connected and not bridge.thread:
+    try:
+        bridge.start()
+    except Exception:
+        pass
 
 # Calculate totals
 total_waiting = sum(int(q.get("occupancy", 0) or 0) for q in queues.values())
@@ -492,8 +514,8 @@ with tab_video:
         if st.button("🔄 Refresh Stream Frame", type="primary", use_container_width=True):
             st.rerun()
 
-    if auto_stream:
-        time.sleep(1.0)
+    if auto_stream and not auto_refresh:
+        time.sleep(1.5)
         st.rerun()
 
 # ==============================================================================
@@ -514,6 +536,36 @@ with tab_attendance:
         st.metric("Unique Students", attendance_summary.get("unique_students", 0))
 
     st.markdown("<br>", unsafe_allow_html=True)
+
+    with st.expander("🧪 Test / Simulate Student RFID Card Tap (No Hardware Needed)"):
+        st.markdown("Test instant attendance logging into Supabase Cloud & Local Database:")
+        sc1, sc2, sc3 = st.columns([2, 1, 1])
+        with sc1:
+            test_student = st.selectbox(
+                "Select Registered Student Card",
+                [
+                    ("7b8bf206", "24BCE8221", "G.Prasanth Paul"),
+                    ("c1a9f868", "24BCE8253", "G.Prem Sasank"),
+                    ("d1157768", "24BCA7344", "T.Mani Sankar"),
+                    ("c1784968", "24BCE8263", "D.Dinesh"),
+                    ("c189f968", "24BCA7285", "Pardha"),
+                    ("d1b3d568", "24BES7016", "G.Aditya"),
+                ],
+                format_func=lambda s: f"{s[2]} ({s[1]}) — UID: {s[0]}"
+            )
+        with sc2:
+            test_action = st.radio("Event Action", ["ENTRY", "EXIT"], horizontal=True)
+        with sc3:
+            st.markdown("<div style='height: 28px'></div>", unsafe_allow_html=True)
+            if st.button("📲 Tap Card", type="primary", use_container_width=True):
+                uid, roll, sname = test_student
+                try:
+                    save_attendance_event(uid, roll, sname, test_action)
+                    st.success(f"Recorded {test_action} for {sname}!")
+                    time.sleep(0.4)
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"Error saving attendance: {ex}")
     
     # Search box & Refresh
     col_s1, col_s2 = st.columns([4, 1])

@@ -422,11 +422,13 @@
     }
 
     async function updateDashboard() {
+      let isMonitoring = false;
       try {
         const response = await fetch("/api/stats", { cache: "no-store" });
         if (!response.ok) throw new Error("Could not load queue statistics");
         const data = await response.json();
-        setStatus(data.monitoring);
+        isMonitoring = Boolean(data.monitoring);
+        setStatus(isMonitoring);
         updateSummaryMetrics(data.queues || {});
         renderQueueCards(data.queues || {});
 
@@ -446,14 +448,13 @@
       const liveImage = document.getElementById("live-video-stream");
       const placeholder = document.getElementById("video-placeholder");
       if (liveImage && placeholder) {
-        liveImage.onload = () => {
-          streamFailed = false;
+        if (isMonitoring || (liveImage.naturalWidth && liveImage.naturalWidth > 0)) {
           placeholder.classList.add("hidden");
-        };
-        liveImage.onerror = () => {
-          streamFailed = true;
-          if (!streamActive) placeholder.classList.remove("hidden");
-        };
+          placeholder.style.display = "none";
+        } else {
+          placeholder.classList.remove("hidden");
+          placeholder.style.display = "flex";
+        }
       }
     }
 

@@ -186,13 +186,13 @@ class ArduinoQueueBridge:
             return
 
         # ---- RFID attendance event ---------------------------------------
-        parts = stripped.split(",", 4)
+        parts = [p.strip() for p in stripped.split(",", 4)]
         if len(parts) >= 5 and parts[0].upper() == "RFID":
             _, uid, roll, name, event = parts
             try:
-                save_attendance_event(uid, roll, name, event)
+                save_attendance_event(uid, roll, name, event.upper())
                 print("[RFID]", name, "(" + roll + ")" if roll else "(unknown card)",
-                      event)
+                      event.upper())
             except Exception as exc:
                 self.last_error = str(exc)
                 print("[RFID database error]", exc)

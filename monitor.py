@@ -72,12 +72,13 @@ def async_db_worker():
 threading.Thread(target=async_db_worker, daemon=True).start()
 
 
-# Asynchronous non-blocking worker for local disk frame writing & cloud frame publishing
+# Asynchronous non-blocking worker for local disk frame writing (runs fast at 25-30 FPS)
 frame_sync_queue = queue.Queue(maxsize=1)
+cloud_frame_queue = queue.Queue(maxsize=1)
 
 
 def async_frame_worker():
-    last_cloud_upload = 0.0
+    last_cloud_dispatch = 0.0
     while True:
         try:
             frame_img = frame_sync_queue.get()
@@ -93,42 +94,60 @@ def async_frame_worker():
             encoded_ok, encoded_frame = cv2.imencode(
                 ".jpg",
                 dash_frame,
-                [cv2.IMWRITE_JPEG_QUALITY, 70]
+                [cv2.IMWRITE_JPEG_QUALITY, 75]
             )
 
             if encoded_ok:
                 frame_bytes = encoded_frame.tobytes()
-                temporary_frame = LIVE_FRAME_PATH.with_suffix(".tmp.jpg")
+                # Fast direct write to avoid Windows file rename locking
                 try:
-                    temporary_frame.write_bytes(frame_bytes)
-                    temporary_frame.replace(LIVE_FRAME_PATH)
+                    with open(LIVE_FRAME_PATH, "wb") as f:
+                        f.write(frame_bytes)
                 except (PermissionError, OSError):
-                    try:
-                        with open(LIVE_FRAME_PATH, "wb") as f:
-                            f.write(frame_bytes)
-                    except (PermissionError, OSError):
-                        pass
+                    pass
 
-                # Publish to Cloud Database for Streamlit Cloud live viewing (~1 FPS)
+                # Dispatch to separate cloud worker (every 1.5s, non-blocking)
                 now_c = time.monotonic()
-                if now_c - last_cloud_upload >= 1.0:
-                    last_cloud_upload = now_c
-                    if w > 640:
-                        c_scale = 640 / w
-                        cloud_frame = cv2.resize(frame_img, (640, int(h * c_scale)), interpolation=cv2.INTER_AREA)
+                if now_c - last_cloud_dispatch >= 1.5:
+                    last_cloud_dispatch = now_c
+                    if w > 540:
+                        c_scale = 540 / w
+                        c_frame = cv2.resize(frame_img, (540, int(h * c_scale)), interpolation=cv2.INTER_AREA)
                     else:
-                        cloud_frame = frame_img
-                    c_ok, c_enc = cv2.imencode(".jpg", cloud_frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
+                        c_frame = frame_img
+                    c_ok, c_enc = cv2.imencode(".jpg", c_frame, [cv2.IMWRITE_JPEG_QUALITY, 55])
                     if c_ok:
+                        c_bytes = c_enc.tobytes()
+                        if not cloud_frame_queue.empty():
+                            try:
+                                cloud_frame_queue.get_nowait()
+                            except queue.Empty:
+                                pass
                         try:
-                            update_live_frame(c_enc.tobytes())
-                        except Exception:
+                            cloud_frame_queue.put_nowait(c_bytes)
+                        except queue.Full:
                             pass
         except Exception:
             pass
 
 
+def async_cloud_worker():
+    """Independent background worker for Supabase cloud frame uploads — never slows down local video."""
+    while True:
+        try:
+            c_bytes = cloud_frame_queue.get()
+            if c_bytes is None:
+                break
+            try:
+                update_live_frame(c_bytes)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+
 threading.Thread(target=async_frame_worker, daemon=True).start()
+threading.Thread(target=async_cloud_worker, daemon=True).start()
 
 
 # ============================================

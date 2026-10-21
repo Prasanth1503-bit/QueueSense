@@ -29,7 +29,7 @@ def dashboard():
 
 @app.route("/api/stats")
 def get_stats():
-    queues = get_queue_statistics()
+    queues = get_queue_statistics(max_age_seconds=15)
     shortest = None
     shortest_wait = None
     limits = get_queue_alert_limits()
@@ -79,6 +79,21 @@ def get_stats():
         "alert_limits": limits,
         "arduino": bridge.status()
     })
+
+
+@app.route("/api/attendance/simulate", methods=["POST"])
+def simulate_attendance():
+    data = request.get_json(silent=True) or {}
+    card_uid = str(data.get("card_uid", "7b8bf206")).strip()
+    roll = str(data.get("roll_number", "24BCE8221")).strip()
+    name = str(data.get("student_name", "G.Prasanth Paul")).strip()
+    event = str(data.get("event_type", "ENTRY")).strip().upper()
+    try:
+        event_id = save_attendance_event(card_uid, roll, name, event)
+        return jsonify({"success": True, "id": event_id, "summary": get_attendance_summary()})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+
 
 
 @app.route("/api/history")

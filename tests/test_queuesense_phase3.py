@@ -76,6 +76,8 @@ TEST_DB = tf.name
 tf.close()
 
 orig_db_path = database.DATABASE_PATH
+orig_is_pg = database.is_postgres
+database.is_postgres = lambda: False
 database.DATABASE_PATH = Path(TEST_DB)
 
 try:
@@ -106,6 +108,13 @@ try:
     conn.close()
 except Exception as e:
     record("initialize_database() without error", False, str(e))
+finally:
+    database.is_postgres = orig_is_pg
+    database.DATABASE_PATH = orig_db_path
+    try:
+        os.remove(TEST_DB)
+    except Exception:
+        pass
 
 
 # ======================================================================

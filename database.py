@@ -10,6 +10,13 @@ except ImportError:
     psycopg2 = None
     RealDictCursor = None
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
 def get_postgres_url():
     """Dynamically resolve the PostgreSQL / Supabase URL from env or Streamlit secrets."""
     url = (

@@ -455,6 +455,26 @@ def initialize_integration_tables():
             for name, limit_value in (("student", 3), ("faculty", 3), ("scholar", 3)):
                 connection.execute("""INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at)
                     VALUES(?,?,?) ON CONFLICT(queue_name) DO NOTHING""", (name, limit_value, current_timestamp()))
+            
+            # Auto-sync offline SQLite records into Supabase so no scans are lost
+            try:
+                if DATABASE_PATH.exists():
+                    with sqlite3.connect(str(DATABASE_PATH), timeout=5) as lconn:
+                        lconn.row_factory = sqlite3.Row
+                        has_tab = lconn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='attendance_events'").fetchone()
+                        if has_tab:
+                            l_rows = lconn.execute("SELECT card_uid, roll_number, student_name, event_type, event_time FROM attendance_events").fetchall()
+                            if l_rows:
+                                c_existing = connection.execute("SELECT event_time, card_uid FROM attendance_events").fetchall()
+                                c_set = {(r["event_time"], r["card_uid"]) for r in c_existing}
+                                for lr in l_rows:
+                                    if (lr["event_time"], lr["card_uid"]) not in c_set:
+                                        connection.execute(
+                                            "INSERT INTO attendance_events (card_uid, roll_number, student_name, event_type, event_time) VALUES (?, ?, ?, ?, ?)",
+                                            (lr["card_uid"], lr["roll_number"], lr["student_name"], lr["event_type"], lr["event_time"])
+                                        )
+            except Exception:
+                pass
         else:
             connection.execute("""CREATE TABLE IF NOT EXISTS attendance_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -490,6 +510,16 @@ def save_attendance_event(card_uid, roll_number, student_name, event_type, event
                 "INSERT INTO attendance_events(card_uid,roll_number,student_name,event_type,event_time) VALUES(?,?,?,?,?) RETURNING id",
                 (uid, str(roll_number or "").strip(), str(student_name or "").strip(), event_type, stamp)
             )
+            # Backup locally in SQLite as well
+            try:
+                if DATABASE_PATH.exists():
+                    with sqlite3.connect(str(DATABASE_PATH), timeout=5) as lconn:
+                        lconn.execute(
+                            "INSERT INTO attendance_events(card_uid,roll_number,student_name,event_type,event_time) VALUES(?,?,?,?,?)",
+                            (uid, str(roll_number or "").strip(), str(student_name or "").strip(), event_type, stamp)
+                        )
+            except Exception:
+                pass
             return cur.lastrowid
         else:
             cur = connection.execute(

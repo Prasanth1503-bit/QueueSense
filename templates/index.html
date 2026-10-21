@@ -48,6 +48,7 @@
           <p class="subheading">Track queue occupancy, hardware alarms, and RFID attendance in real time.</p>
         </div>
         <div class="topbar-right">
+          <div class="date-chip" id="rfid-chip" style="color: #34d399; font-weight: 600; border-color: rgba(52, 211, 153, 0.4);">🪪 Loading RFID...</div>
           <div class="status-pill" id="system-status">
             <span class="status-dot"></span>
             <span id="status-text">Waiting for monitoring</span>
@@ -660,6 +661,16 @@
         const events = data.events || [];
         rows.innerHTML = events.length ? events.map(e => `<tr><td>${escapeHtml(e.event_time || "")}</td><td><strong>${escapeHtml(e.student_name || "Unknown")}</strong></td><td>${escapeHtml(e.roll_number || "—")}</td><td><code>${escapeHtml(e.card_uid || "")}</code></td><td><span class="event-badge ${String(e.event_type).toLowerCase()}">${escapeHtml(e.event_type || "")}</span></td></tr>`).join("") : '<tr><td colspan="5">No attendance records found.</td></tr>';
         document.getElementById("attendance-message").textContent = `${events.length} records`;
+        
+        const rfidChip = document.getElementById("rfid-chip");
+        if (rfidChip) {
+          if (events.length > 0) {
+            const latest = events[0];
+            rfidChip.textContent = `🪪 ${latest.student_name || 'Card'} (${latest.event_type}) · ${values[0]} scans`;
+          } else {
+            rfidChip.textContent = `🪪 0 RFID scans`;
+          }
+        }
       } catch (error) {
         rows.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`;
       }

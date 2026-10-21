@@ -306,33 +306,33 @@ with tab_overview:
     with col1:
         st.markdown(f"""
         <div class="metric-box">
-            <div class="metric-label">People Waiting</div>
+            <div class="metric-label">Queue Occupancy</div>
             <div class="metric-num" style="color: #38bdf8;">{total_waiting}</div>
-            <small style="color: #64748b;">Across all active queues</small>
+            <small style="color: #64748b;">People waiting in queues</small>
         </div>
         """, unsafe_allow_html=True)
     with col2:
         st.markdown(f"""
         <div class="metric-box">
-            <div class="metric-label">Confirmed Entries</div>
-            <div class="metric-num" style="color: #34d399;">{total_entries}</div>
-            <small style="color: #64748b;">Session total</small>
+            <div class="metric-label">Active Queues</div>
+            <div class="metric-num" style="color: #c084fc;">{active_count}</div>
+            <small style="color: #64748b;">Monitored camera zones</small>
         </div>
         """, unsafe_allow_html=True)
     with col3:
         st.markdown(f"""
         <div class="metric-box">
-            <div class="metric-label">Confirmed Exits</div>
-            <div class="metric-num" style="color: #fb923c;">{total_exits}</div>
-            <small style="color: #64748b;">Session total</small>
+            <div class="metric-label">RFID Card Scans</div>
+            <div class="metric-num" style="color: #34d399;">{attendance_summary.get('total_events', 0)}</div>
+            <small style="color: #64748b;">{attendance_summary.get('total_entries', 0)} IN · {attendance_summary.get('total_exits', 0)} OUT</small>
         </div>
         """, unsafe_allow_html=True)
     with col4:
         st.markdown(f"""
         <div class="metric-box">
-            <div class="metric-label">Active Queues</div>
-            <div class="metric-num" style="color: #c084fc;">{active_count}</div>
-            <small style="color: #64748b;">Monitored zones</small>
+            <div class="metric-label">Unique Students</div>
+            <div class="metric-num" style="color: #fb923c;">{attendance_summary.get('unique_students', 0)}</div>
+            <small style="color: #64748b;">Verified attendance IDs</small>
         </div>
         """, unsafe_allow_html=True)
 

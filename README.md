@@ -12,10 +12,17 @@ Uno for RFID attendance and buzzer alerts.
 ```
 D:\QueueSense\
 │
-├── app.py                     # Flask web server + all API routes
-├── database.py                # SQLite schema, migrations, all DB functions
-├── arduino_queue_bridge.py    # USB serial owner: buzzer control + RFID parsing
+├── streamlit_app.py           # Streamlit Cloud & local intelligence dashboard
+├── run_dashboard.bat          # One-click Windows launcher for Streamlit dashboard
+├── database.py                # Dual DB connector (Supabase PostgreSQL + SQLite)
+├── supabase_schema.sql        # Supabase PostgreSQL cloud database schema
 ├── monitor.py                 # YOLO + ByteTrack vision monitor (run separately)
+├── arduino_queue_bridge.py    # USB serial owner: buzzer control + RFID parsing
+├── app.py                     # Flask web server & REST API
+│
+├── DEPLOYMENT.md              # Streamlit Cloud & Supabase deployment guide
+├── .env.example               # Environment variables configuration template
+├── requirements.txt           # Python dependencies
 │
 ├── arduino\
 │   └── QueueSense_RFID.ino    # Arduino Uno firmware (RC522 RFID + 16x2 I2C LCD + Buzzer + LED)
@@ -34,12 +41,10 @@ D:\QueueSense\
 │
 ├── static\
 │   ├── style.css              # Dashboard CSS (Arduino/RFID additions)
-│   └── live_frame.jpg         # Written by monitor.py, read by Flask video stream
+│   └── live_frame.jpg         # Written by monitor.py, read by dashboard
 │
-├── videos\                    # Place your video files here
-├── yolo26n.pt                 # YOLO model weights
-├── queuesense.db              # SQLite database (DO NOT DELETE)
-└── requirements.txt           # Python dependencies
+├── videos\                    # Video sample files
+└── yolo26n.pt                 # YOLO model weights
 ```
 
 ---
@@ -91,20 +96,22 @@ Expected output: `Total: 164  Passed: 164  Failed: 0`
 
 ## Running the System
 
-**Always start the Flask dashboard FIRST, then the monitor in a second window.**
+**Start your dashboard (Streamlit or Flask) FIRST, then run the monitor in a second window.**
 
-### Window 1 – Flask dashboard
+### Window 1 – Streamlit Dashboard
 
+**Launch Dashboard (Recommended):**
 ```powershell
 cd D:\QueueSense
-
-# Optional: override Arduino COM port (auto-detects if omitted)
-# $env:QUEUESENSE_ARDUINO_PORT = 'COM5'
-
-.\.venv\Scripts\python.exe app.py
+.\run_dashboard.bat
+# or: .\.venv\Scripts\streamlit.exe run streamlit_app.py
 ```
+Open **http://localhost:8501** in your browser.
 
-Open **http://127.0.0.1:5000** in your browser.
+*(For full Streamlit Cloud deployment & Supabase setup, see [DEPLOYMENT.md](file:///d:/QueueSense/DEPLOYMENT.md))*
+
+
+
 
 ### Window 2 – Queue monitor (YOLO + video)
 
@@ -165,7 +172,7 @@ The Arduino sketch is located at [`arduino/QueueSense_RFID.ino`](file:///D:/Queu
 
 | UID (Hex) | Roll Number | Student Name |
 |---|---|---|
-| `07b8bf26` | 24BCE8221 | G.Prasanth Paul |
+| `7b8bf206` | 24BCE8221 | G.Prasanth Paul |
 | `c1a9f868` | 24BCE8253 | G.Prem Sasank |
 | `d1157768` | 24BCA7344 | T.Mani Sankar |
 | `c1784968` | 24BCE8263 | D.Dinesh |
@@ -198,7 +205,7 @@ The Arduino sketch is located at [`arduino/QueueSense_RFID.ino`](file:///D:/Queu
      `Connected · COMx`
 
 3. **Test Card Scans (RFID Attendance):**
-   - Tap any registered card (e.g., G.Prasanth Paul `07b8bf26`):
+   - Tap any registered card (e.g., G.Prasanth Paul `7b8bf206`):
      - Short beep (120ms) and LED blink.
      - LCD displays:
        ```

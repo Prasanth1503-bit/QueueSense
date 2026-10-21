@@ -49,7 +49,7 @@ if ino_path.is_file():
     
     # Check all 6 students in sketch
     sketch_students = [
-        ("07b8bf26", "24BCE8221", "G.Prasanth Paul"),
+        ("7b8bf206", "24BCE8221", "G.Prasanth Paul"),
         ("c1a9f868", "24BCE8253", "G.Prem Sasank"),
         ("d1157768", "24BCA7344", "T.Mani Sankar"),
         ("c1784968", "24BCE8263", "D.Dinesh"),

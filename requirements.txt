@@ -1,16 +1,20 @@
-# QueueSense - Smart Queue Intelligence System
-# Complete requirements including Arduino/RFID integration
+# QueueSense - Complete Dependencies
 
-# Web framework
-Flask==3.1.3
+# Streamlit Dashboard & Cloud Database (Supabase PostgreSQL)
+streamlit>=1.30.0
+supabase>=2.0.0
+psycopg2-binary>=2.9.0
+pandas>=2.0.0
+python-dotenv>=1.0.0
+Flask>=3.0.0
 
-# Computer vision
+# Computer Vision & Tracking
 opencv-python==5.0.0.93
 ultralytics==8.4.180
 lap==0.5.13
 numpy==2.5.4
 PyYAML==6.0.3
-Pillow==13.0.0
+Pillow>=10.0.0
 
 # PyTorch & Torchvision
 # For CUDA 12.8 GPU acceleration:
@@ -20,5 +24,5 @@ Pillow==13.0.0
 torch>=2.0.0
 torchvision>=0.15.0
 
-# Arduino / Serial communication
+# Arduino & Hardware Serial
 pyserial>=3.5

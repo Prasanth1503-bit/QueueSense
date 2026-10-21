@@ -1,14 +1,124 @@
+import os
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
 
-DATABASE_PATH = Path(__file__).resolve().parent / "queuesense.db"
+try:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+except ImportError:
+    psycopg2 = None
+    RealDictCursor = None
+
+# Supabase / PostgreSQL configuration
+POSTGRES_URL = (
+    os.getenv("DATABASE_URL")
+    or os.getenv("SUPABASE_DB_URL")
+    or os.getenv("POSTGRES_URL")
+    or ""
+).strip()
+
+try:
+    import streamlit as _st
+    if not POSTGRES_URL and hasattr(_st, "secrets"):
+        POSTGRES_URL = (
+            _st.secrets.get("DATABASE_URL")
+            or _st.secrets.get("SUPABASE_DB_URL")
+            or _st.secrets.get("POSTGRES_URL")
+            or ""
+        ).strip()
+except Exception:
+    pass
+
+_custom_db = os.getenv("QUEUESENSE_DB_PATH") or os.getenv("DATABASE_PATH")
+DATABASE_PATH = Path(_custom_db) if _custom_db else (Path(__file__).resolve().parent / "queuesense.db")
+DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+def is_postgres():
+    return bool(psycopg2 and POSTGRES_URL and POSTGRES_URL.startswith(("postgres://", "postgresql://")))
+
+
+def get_db_info():
+    if is_postgres():
+        target = POSTGRES_URL.split("@")[-1] if "@" in POSTGRES_URL else "Supabase"
+        return {"engine": "PostgreSQL (Supabase Cloud)", "target": target, "is_cloud": True}
+    return {"engine": "SQLite (Local File)", "target": str(DATABASE_PATH.name), "is_cloud": False}
+
+
+class PostgresCursorWrapper:
+    def __init__(self, cursor):
+        self.cursor = cursor
+        self._last_id = None
+        if cursor.description:
+            try:
+                row = cursor.fetchone()
+                if row and "id" in row:
+                    self._last_id = row["id"]
+                # Rewind if possible or cache for fetchone
+                self._cached_row = row
+            except Exception:
+                self._cached_row = None
+        else:
+            self._cached_row = None
+
+    @property
+    def lastrowid(self):
+        return self._last_id
+
+    def fetchall(self):
+        if self._cached_row is not None:
+            remaining = self.cursor.fetchall()
+            rows = [self._cached_row] + remaining
+            self._cached_row = None
+            return rows
+        return self.cursor.fetchall()
+
+    def fetchone(self):
+        if self._cached_row is not None:
+            row = self._cached_row
+            self._cached_row = None
+            return row
+        return self.cursor.fetchone()
+
+
+class DBConnectionContext:
+    def __init__(self, raw_conn, is_pg):
+        self.raw = raw_conn
+        self.is_pg = is_pg
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is None:
+                self.raw.commit()
+            else:
+                self.raw.rollback()
+        finally:
+            self.raw.close()
+
+    def execute(self, query, params=None):
+        if self.is_pg:
+            pg_query = query.replace("?", "%s")
+            cur = self.raw.cursor(cursor_factory=RealDictCursor)
+            cur.execute(pg_query, params or ())
+            return PostgresCursorWrapper(cur)
+        else:
+            if params is None:
+                return self.raw.execute(query)
+            return self.raw.execute(query, params)
 
 
 def get_connection():
-    connection = sqlite3.connect(str(DATABASE_PATH), timeout=10)
-    connection.row_factory = sqlite3.Row
-    return connection
+    if is_postgres():
+        conn = psycopg2.connect(POSTGRES_URL)
+        return DBConnectionContext(conn, is_pg=True)
+    else:
+        conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
+        conn.row_factory = sqlite3.Row
+        return DBConnectionContext(conn, is_pg=False)
 
 
 def current_timestamp():
@@ -23,27 +133,57 @@ def get_cutoff_timestamp(hours):
 def initialize_database():
     """Create missing tables and safely migrate columns without deleting data."""
     with get_connection() as connection:
-        connection.execute("""CREATE TABLE IF NOT EXISTS queue_status (
-            queue_name TEXT PRIMARY KEY,
-            occupancy INTEGER NOT NULL DEFAULT 0,
-            total_entries INTEGER NOT NULL DEFAULT 0,
-            total_exits INTEGER NOT NULL DEFAULT 0,
-            average_wait_seconds REAL NOT NULL DEFAULT 0,
-            updated_at TEXT NOT NULL
-        )""")
-        connection.execute("""CREATE TABLE IF NOT EXISTS queue_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            queue_name TEXT NOT NULL,
-            occupancy INTEGER NOT NULL,
-            total_entries INTEGER NOT NULL,
-            total_exits INTEGER NOT NULL,
-            average_wait_seconds REAL NOT NULL,
-            recorded_at TEXT NOT NULL
-        )""")
-        columns = {row["name"] for row in connection.execute("PRAGMA table_info(queue_history)").fetchall()}
-        for name, sql_type in (("video_hash", "TEXT"), ("session_id", "TEXT"), ("video_name", "TEXT")):
-            if name not in columns:
-                connection.execute(f"ALTER TABLE queue_history ADD COLUMN {name} {sql_type}")
+        if is_postgres():
+            connection.execute("""CREATE TABLE IF NOT EXISTS queue_status (
+                queue_name TEXT PRIMARY KEY,
+                occupancy INTEGER NOT NULL DEFAULT 0,
+                total_entries INTEGER NOT NULL DEFAULT 0,
+                total_exits INTEGER NOT NULL DEFAULT 0,
+                average_wait_seconds REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS queue_history (
+                id BIGSERIAL PRIMARY KEY,
+                queue_name TEXT NOT NULL,
+                occupancy INTEGER NOT NULL,
+                total_entries INTEGER NOT NULL,
+                total_exits INTEGER NOT NULL,
+                average_wait_seconds REAL NOT NULL,
+                recorded_at TEXT NOT NULL,
+                video_hash TEXT,
+                session_id TEXT,
+                video_name TEXT
+            )""")
+            cols_cur = connection.execute(
+                "SELECT column_name AS name FROM information_schema.columns WHERE table_name = 'queue_history'"
+            )
+            columns = {row["name"] for row in cols_cur.fetchall()}
+            for name, sql_type in (("video_hash", "TEXT"), ("session_id", "TEXT"), ("video_name", "TEXT")):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE queue_history ADD COLUMN {name} {sql_type}")
+        else:
+            connection.execute("""CREATE TABLE IF NOT EXISTS queue_status (
+                queue_name TEXT PRIMARY KEY,
+                occupancy INTEGER NOT NULL DEFAULT 0,
+                total_entries INTEGER NOT NULL DEFAULT 0,
+                total_exits INTEGER NOT NULL DEFAULT 0,
+                average_wait_seconds REAL NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            )""")
+            connection.execute("""CREATE TABLE IF NOT EXISTS queue_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                queue_name TEXT NOT NULL,
+                occupancy INTEGER NOT NULL,
+                total_entries INTEGER NOT NULL,
+                total_exits INTEGER NOT NULL,
+                average_wait_seconds REAL NOT NULL,
+                recorded_at TEXT NOT NULL
+            )""")
+            columns = {row["name"] for row in connection.execute("PRAGMA table_info(queue_history)").fetchall()}
+            for name, sql_type in (("video_hash", "TEXT"), ("session_id", "TEXT"), ("video_name", "TEXT")):
+                if name not in columns:
+                    connection.execute(f"ALTER TABLE queue_history ADD COLUMN {name} {sql_type}")
+
         connection.execute("CREATE INDEX IF NOT EXISTS idx_queue_history_recorded_at ON queue_history(recorded_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_queue_history_name_time ON queue_history(queue_name, recorded_at)")
         connection.execute("CREATE INDEX IF NOT EXISTS idx_queue_history_video_queue ON queue_history(video_hash, queue_name)")
@@ -203,48 +343,121 @@ initialize_database()
 # ===== Arduino/RFID integration tables and functions =====
 def initialize_integration_tables():
     with get_connection() as connection:
-        connection.execute("CREATE TABLE IF NOT EXISTS attendance_events (id INTEGER PRIMARY KEY AUTOINCREMENT, card_uid TEXT NOT NULL, roll_number TEXT, student_name TEXT, event_type TEXT NOT NULL, event_time TEXT NOT NULL)")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_attendance_events_time ON attendance_events(event_time)")
-        connection.execute("CREATE INDEX IF NOT EXISTS idx_attendance_events_roll ON attendance_events(roll_number)")
-        connection.execute("CREATE TABLE IF NOT EXISTS queue_alert_limits (queue_name TEXT PRIMARY KEY, limit_people INTEGER NOT NULL DEFAULT 5, updated_at TEXT NOT NULL)")
-        for name, limit_value in (("student", 3), ("faculty", 3), ("scholar", 3)):
-            connection.execute("INSERT OR IGNORE INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)", (name,limit_value,current_timestamp()))
+        if is_postgres():
+            connection.execute("""CREATE TABLE IF NOT EXISTS attendance_events (
+                id BIGSERIAL PRIMARY KEY,
+                card_uid TEXT NOT NULL,
+                roll_number TEXT,
+                student_name TEXT,
+                event_type TEXT NOT NULL,
+                event_time TEXT NOT NULL
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_attendance_events_time ON attendance_events(event_time)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_attendance_events_roll ON attendance_events(roll_number)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS queue_alert_limits (
+                queue_name TEXT PRIMARY KEY,
+                limit_people INTEGER NOT NULL DEFAULT 5,
+                updated_at TEXT NOT NULL
+            )""")
+            for name, limit_value in (("student", 3), ("faculty", 3), ("scholar", 3)):
+                connection.execute("""INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at)
+                    VALUES(?,?,?) ON CONFLICT(queue_name) DO NOTHING""", (name, limit_value, current_timestamp()))
+        else:
+            connection.execute("""CREATE TABLE IF NOT EXISTS attendance_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                card_uid TEXT NOT NULL,
+                roll_number TEXT,
+                student_name TEXT,
+                event_type TEXT NOT NULL,
+                event_time TEXT NOT NULL
+            )""")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_attendance_events_time ON attendance_events(event_time)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_attendance_events_roll ON attendance_events(roll_number)")
+            connection.execute("""CREATE TABLE IF NOT EXISTS queue_alert_limits (
+                queue_name TEXT PRIMARY KEY,
+                limit_people INTEGER NOT NULL DEFAULT 5,
+                updated_at TEXT NOT NULL
+            )""")
+            for name, limit_value in (("student", 3), ("faculty", 3), ("scholar", 3)):
+                connection.execute("""INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at)
+                    VALUES(?,?,?) ON CONFLICT(queue_name) DO NOTHING""", (name, limit_value, current_timestamp()))
+
 
 def save_attendance_event(card_uid, roll_number, student_name, event_type, event_time=None):
-    uid=str(card_uid).strip().lower(); event_type=str(event_type).strip().upper()
-    if not uid: raise ValueError("Card UID cannot be empty")
-    if event_type not in ("ENTRY","EXIT","UNKNOWN"): raise ValueError("Invalid attendance event type")
+    uid = str(card_uid).strip().lower()
+    event_type = str(event_type).strip().upper()
+    if not uid:
+        raise ValueError("Card UID cannot be empty")
+    if event_type not in ("ENTRY", "EXIT", "UNKNOWN"):
+        raise ValueError("Invalid attendance event type")
+    stamp = event_time or current_timestamp()
     with get_connection() as connection:
-        cur=connection.execute("INSERT INTO attendance_events(card_uid,roll_number,student_name,event_type,event_time) VALUES(?,?,?,?,?)", (uid,str(roll_number or "").strip(),str(student_name or "").strip(),event_type,event_time or current_timestamp()))
-        return cur.lastrowid
+        if is_postgres():
+            cur = connection.execute(
+                "INSERT INTO attendance_events(card_uid,roll_number,student_name,event_type,event_time) VALUES(?,?,?,?,?) RETURNING id",
+                (uid, str(roll_number or "").strip(), str(student_name or "").strip(), event_type, stamp)
+            )
+            return cur.lastrowid
+        else:
+            cur = connection.execute(
+                "INSERT INTO attendance_events(card_uid,roll_number,student_name,event_type,event_time) VALUES(?,?,?,?,?)",
+                (uid, str(roll_number or "").strip(), str(student_name or "").strip(), event_type, stamp)
+            )
+            return cur.lastrowid
+
 
 def get_attendance_events(limit=200, search=None):
-    limit=max(1,min(int(limit),5000)); query="SELECT id,card_uid,roll_number,student_name,event_type,event_time FROM attendance_events"; params=[]
+    limit = max(1, min(int(limit), 5000))
+    query = "SELECT id,card_uid,roll_number,student_name,event_type,event_time FROM attendance_events"
+    params = []
     if search and str(search).strip():
-        term="%"+str(search).strip()+"%"; query += " WHERE student_name LIKE ? OR roll_number LIKE ? OR card_uid LIKE ? OR event_type LIKE ?"; params.extend([term]*4)
-    query += " ORDER BY id DESC LIMIT ?"; params.append(limit)
-    with get_connection() as connection: rows=connection.execute(query,params).fetchall()
+        term = "%" + str(search).strip() + "%"
+        query += " WHERE student_name LIKE ? OR roll_number LIKE ? OR card_uid LIKE ? OR event_type LIKE ?"
+        params.extend([term] * 4)
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    with get_connection() as connection:
+        rows = connection.execute(query, params).fetchall()
     return [dict(row) for row in rows]
+
 
 def get_attendance_summary():
     with get_connection() as connection:
-        total=connection.execute("SELECT COUNT(*) n FROM attendance_events").fetchone()["n"]
-        entries=connection.execute("SELECT COUNT(*) n FROM attendance_events WHERE event_type='ENTRY'").fetchone()["n"]
-        exits=connection.execute("SELECT COUNT(*) n FROM attendance_events WHERE event_type='EXIT'").fetchone()["n"]
-        students=connection.execute("SELECT COUNT(DISTINCT roll_number) n FROM attendance_events WHERE roll_number IS NOT NULL AND roll_number!='' AND event_type IN ('ENTRY','EXIT')").fetchone()["n"]
-    return {"total_events":total,"total_entries":entries,"total_exits":exits,"unique_students":students}
+        total = connection.execute("SELECT COUNT(*) n FROM attendance_events").fetchone()["n"]
+        entries = connection.execute("SELECT COUNT(*) n FROM attendance_events WHERE event_type='ENTRY'").fetchone()["n"]
+        exits = connection.execute("SELECT COUNT(*) n FROM attendance_events WHERE event_type='EXIT'").fetchone()["n"]
+        students = connection.execute(
+            "SELECT COUNT(DISTINCT roll_number) n FROM attendance_events WHERE roll_number IS NOT NULL AND roll_number!='' AND event_type IN ('ENTRY','EXIT')"
+        ).fetchone()["n"]
+    return {
+        "total_events": int(total or 0),
+        "total_entries": int(entries or 0),
+        "total_exits": int(exits or 0),
+        "unique_students": int(students or 0)
+    }
+
 
 def get_queue_alert_limits():
-    with get_connection() as connection: rows=connection.execute("SELECT queue_name,limit_people,updated_at FROM queue_alert_limits ORDER BY queue_name").fetchall()
-    return {r["queue_name"]:{"limit_people":r["limit_people"],"updated_at":r["updated_at"]} for r in rows}
+    with get_connection() as connection:
+        rows = connection.execute("SELECT queue_name,limit_people,updated_at FROM queue_alert_limits ORDER BY queue_name").fetchall()
+    return {r["queue_name"]: {"limit_people": r["limit_people"], "updated_at": r["updated_at"]} for r in rows}
+
 
 def save_queue_alert_limit(queue_name, limit_people):
-    name=str(queue_name).strip(); limit_value=int(limit_people)
-    if not name: raise ValueError("Queue name cannot be empty")
-    if limit_value<0: raise ValueError("Limit cannot be negative")
-    stamp=current_timestamp()
+    name = str(queue_name).strip()
+    limit_value = int(limit_people)
+    if not name:
+        raise ValueError("Queue name cannot be empty")
+    if limit_value < 0:
+        raise ValueError("Limit cannot be negative")
+    stamp = current_timestamp()
     with get_connection() as connection:
-        connection.execute("INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?) ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at",(name,limit_value,stamp))
-    return {"queue_name":name,"limit_people":limit_value,"updated_at":stamp}
+        connection.execute(
+            """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
+            ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
+            (name, limit_value, stamp)
+        )
+    return {"queue_name": name, "limit_people": limit_value, "updated_at": stamp}
+
 
 initialize_integration_tables()

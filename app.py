@@ -1,6 +1,7 @@
-from flask import Flask, render_template, jsonify, Response, request
-from pathlib import Path
+import os
 import time
+from pathlib import Path
+from flask import Flask, render_template, jsonify, Response, request
 from database import (get_queue_statistics, get_attendance_events, get_attendance_summary,
                       get_queue_alert_limits, save_queue_alert_limit,
                       get_queue_history, get_queue_history_summary,
@@ -10,7 +11,7 @@ from arduino_queue_bridge import bridge
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 LIVE_FRAME_PATH = BASE_DIR / "static" / "live_frame.jpg"
-SERVICE_SECONDS_PER_PERSON = 25
+SERVICE_SECONDS_PER_PERSON = int(os.getenv("SERVICE_SECONDS_PER_PERSON", 25))
 
 
 @app.route("/")
@@ -249,9 +250,29 @@ def api_live_frame():
     return ("", 204)
 
 
+@app.route("/health")
+def health():
+    return jsonify({
+        "status": "healthy",
+        "service": "QueueSense",
+        "timestamp": time.time(),
+        "arduino": bridge.status()
+    }), 200
+
+
+def init_hardware_bridge():
+    """Start hardware bridge if enabled by environment settings."""
+    if os.getenv("ENABLE_ARDUINO", "true").lower() in ("true", "1", "yes"):
+        bridge.start()
+
+
 if __name__ == "__main__":
-    bridge.start()
+    host = os.getenv("HOST", "0.0.0.0")
+    port = int(os.getenv("PORT", 5000))
+    debug = os.getenv("FLASK_DEBUG", "0").lower() in ("1", "true")
+    init_hardware_bridge()
     try:
-        app.run(host="127.0.0.1", port=5000, debug=False, threaded=True, use_reloader=False)
+        app.run(host=host, port=port, debug=debug, threaded=True, use_reloader=False)
     finally:
         bridge.close()
+

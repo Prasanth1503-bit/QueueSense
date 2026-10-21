@@ -344,8 +344,76 @@ def save_queue_statistics(statistics, save_history=False, video_hash=None, sessi
                     (queue_name, occupancy, entries, exits, average_wait, timestamp,
                      video_hash, session_id, resolved_video_name))
 
+    # Dual persistence: also write to local SQLite so local Flask/Streamlit dashboards stay in 100% sync
+    if is_postgres() and DATABASE_PATH.exists():
+        try:
+            with sqlite3.connect(str(DATABASE_PATH), timeout=5) as lconn:
+                if statistics:
+                    placeholders = ",".join(["?"] * len(statistics))
+                    lconn.execute(f"DELETE FROM queue_status WHERE queue_name NOT IN ({placeholders})", tuple(statistics.keys()))
+                else:
+                    lconn.execute("DELETE FROM queue_status")
+                for queue_name, values in statistics.items():
+                    occupancy = max(0, int(values.get("occupancy", 0) or 0))
+                    entries = max(0, int(values.get("entries", 0) or 0))
+                    exits = max(0, int(values.get("exits", 0) or 0))
+                    average_wait = max(0.0, float(values.get("average_wait_seconds", 0) or 0))
+                    lconn.execute("""INSERT INTO queue_status
+                        (queue_name, occupancy, total_entries, total_exits, average_wait_seconds, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(queue_name) DO UPDATE SET
+                            occupancy=excluded.occupancy,
+                            total_entries=excluded.total_entries,
+                            total_exits=excluded.total_exits,
+                            average_wait_seconds=excluded.average_wait_seconds,
+                            updated_at=excluded.updated_at""",
+                        (queue_name, occupancy, entries, exits, average_wait, timestamp))
+                    if save_history:
+                        lconn.execute("""INSERT INTO queue_history
+                            (queue_name, occupancy, total_entries, total_exits, average_wait_seconds,
+                             recorded_at, video_hash, session_id, video_name)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (queue_name, occupancy, entries, exits, average_wait, timestamp,
+                             video_hash, session_id, resolved_video_name))
+                lconn.commit()
+        except Exception:
+            pass
+
 
 def get_queue_statistics(max_age_seconds=20):
+    # Fast path for local environment: read from local SQLite if fresh records exist (<1ms response)
+    if is_postgres() and DATABASE_PATH.exists():
+        try:
+            with sqlite3.connect(str(DATABASE_PATH), timeout=2) as lconn:
+                lconn.row_factory = sqlite3.Row
+                lrows = lconn.execute("""SELECT queue_name, occupancy, total_entries, total_exits,
+                    average_wait_seconds, updated_at FROM queue_status ORDER BY queue_name""").fetchall()
+            if lrows:
+                now_dt = datetime.now().astimezone()
+                lres = {}
+                is_fresh = True
+                for row in lrows:
+                    upd = row["updated_at"]
+                    if max_age_seconds is not None and upd:
+                        try:
+                            dt = datetime.fromisoformat(upd)
+                            if (now_dt - dt).total_seconds() > max_age_seconds:
+                                is_fresh = False
+                                break
+                        except Exception:
+                            pass
+                    lres[row["queue_name"]] = {
+                        "occupancy": row["occupancy"],
+                        "entries": row["total_entries"],
+                        "exits": row["total_exits"],
+                        "average_wait_seconds": row["average_wait_seconds"],
+                        "updated_at": row["updated_at"]
+                    }
+                if is_fresh and lres:
+                    return lres
+        except Exception:
+            pass
+
     with get_connection() as connection:
         rows = connection.execute("""SELECT queue_name, occupancy, total_entries, total_exits,
             average_wait_seconds, updated_at FROM queue_status ORDER BY queue_name""").fetchall()
@@ -448,6 +516,13 @@ def reset_queue_status():
     """Clear only current status; retain historical records."""
     with get_connection() as connection:
         connection.execute("DELETE FROM queue_status")
+    if is_postgres() and DATABASE_PATH.exists():
+        try:
+            with sqlite3.connect(str(DATABASE_PATH), timeout=5) as lconn:
+                lconn.execute("DELETE FROM queue_status")
+                lconn.commit()
+        except Exception:
+            pass
 
 
 try:

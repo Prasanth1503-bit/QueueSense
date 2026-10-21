@@ -6,6 +6,9 @@ Utilizes native Streamlit Fragments (@st.fragment) for fluid, zero-flicker, real
 
 import os
 import time
+import json
+import urllib.request
+import urllib.error
 from datetime import datetime
 from pathlib import Path
 import pandas as pd
@@ -280,34 +283,42 @@ tab_overview, tab_video, tab_attendance, tab_limits, tab_history, tab_supabase =
 ])
 
 
-# ==============================================================================
-# TAB 1: OVERVIEW (Isolated 1.0s Fragment — Real-Time Live Metrics)
-# ==============================================================================
-@st.fragment(run_every=1.0)
-def render_overview_fragment():
-    queues = get_queue_statistics(max_age_seconds=5)
+def fetch_live_queues():
+    """Fetches real-time queue statistics.
+    When running locally with Flask, connects directly to Flask API for 100% exact synchronization.
+    Falls back seamlessly to database when running standalone or on Streamlit Cloud."""
+    try:
+        req = urllib.request.Request("http://127.0.0.1:5000/api/stats", headers={"User-Agent": "QueueSense-Streamlit"})
+        with urllib.request.urlopen(req, timeout=0.35) as resp:
+            if resp.status == 200:
+                data = json.loads(resp.read().decode("utf-8"))
+                return (
+                    data.get("queues", {}),
+                    data.get("alert_limits", {}),
+                    data.get("attendance_summary", {}),
+                    data.get("recommended_queue"),
+                    data.get("recommended_wait_seconds")
+                )
+    except Exception:
+        pass
+
+    queues = get_queue_statistics(max_age_seconds=10)
     limits = get_queue_alert_limits()
     attendance_summary = get_attendance_summary()
-
-    total_waiting = sum(int(q.get("occupancy", 0) or 0) for q in queues.values())
-    active_count = len(queues)
-
-    shortest_queue = None
-    shortest_wait = None
     lower_limits = {str(k).strip().lower(): v for k, v in limits.items()}
+    shortest = None
+    shortest_wait = None
 
     for name, stats in queues.items():
         occ = max(0, int(stats.get("occupancy", 0) or 0))
         wait = occ * SERVICE_SECONDS_PER_PERSON
         stats["estimated_wait_seconds"] = wait
-
         clean = str(name).strip().lower()
         norm = normalize_queue_name(name)
         limit_info = limits.get(name) or limits.get(norm) or lower_limits.get(clean) or lower_limits.get(norm)
         limit_val = int(limit_info.get("limit_people", 3)) if limit_info else 3
         stats["alert_limit"] = limit_val
         stats["alert_active"] = occ > limit_val
-        
         if occ > limit_val:
             stats["status_color"] = "red"
             stats["status_text"] = "OVER LIMIT"
@@ -317,10 +328,22 @@ def render_overview_fragment():
         else:
             stats["status_color"] = "green"
             stats["status_text"] = "NORMAL"
-
         if shortest_wait is None or wait < shortest_wait:
             shortest_wait = wait
-            shortest_queue = name
+            shortest = name
+
+    return queues, limits, attendance_summary, shortest, shortest_wait
+
+
+# ==============================================================================
+# TAB 1: OVERVIEW (Isolated 1.0s Fragment — Real-Time Live Metrics)
+# ==============================================================================
+@st.fragment(run_every=1.0)
+def render_overview_fragment():
+    queues, limits, attendance_summary, shortest_queue, shortest_wait = fetch_live_queues()
+
+    total_waiting = sum(int(q.get("occupancy", 0) or 0) for q in queues.values())
+    active_count = len(queues)
 
     # Sync bridge if local
     if bridge:

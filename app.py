@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from pathlib import Path
 from flask import Flask, render_template, jsonify, Response, request
 
@@ -31,6 +32,14 @@ def add_cors_headers(response):
     return response
 
 
+_live_occupancy_lock = threading.Lock()
+_live_occupancy = {
+    "queues": {},
+    "timestamp": 0.0,
+    "video_name": None
+}
+
+
 @app.route("/")
 def dashboard():
     return render_template("index.html")
@@ -38,7 +47,16 @@ def dashboard():
 
 @app.route("/api/stats")
 def get_stats():
-    queues = get_queue_statistics(max_age_seconds=5)
+    now_m = time.monotonic()
+    live_q = None
+    with _live_occupancy_lock:
+        if now_m - _live_occupancy["timestamp"] < 4.0 and _live_occupancy["queues"]:
+            live_q = {k: dict(v) for k, v in _live_occupancy["queues"].items()}
+
+    if live_q is not None:
+        queues = live_q
+    else:
+        queues = get_queue_statistics(max_age_seconds=8)
     shortest = None
     shortest_wait = None
     limits = get_queue_alert_limits()
@@ -200,6 +218,10 @@ def receive_queue_occupancy():
     queues = data.get("queues", {})
     if not isinstance(queues, dict):
         return jsonify({"success": False, "error": "queues must be an object"}), 400
+    with _live_occupancy_lock:
+        _live_occupancy["queues"] = queues
+        _live_occupancy["timestamp"] = time.monotonic()
+        _live_occupancy["video_name"] = data.get("video_name")
     bridge.update_hardware_alerts(queues)
     return jsonify({"success": True, "arduino": bridge.status()})
 

@@ -216,26 +216,15 @@ with st.sidebar:
     st.caption("QueueSense v2.0 · Streamlit & Supabase Edition")
 
 # Top Header Banner
-col_head1, col_head2 = st.columns([2.5, 1.5])
+col_head1, col_head2 = st.columns([3, 1])
 with col_head1:
     st.markdown('<div class="brand-title">QueueSense Intelligence</div>', unsafe_allow_html=True)
     st.markdown('<div class="brand-sub">Real-Time Queue Monitoring, RFID Attendance & Hardware Alarm Controls</div>', unsafe_allow_html=True)
 with col_head2:
     st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-    b_col1, b_col2 = st.columns(2)
-    with b_col1:
-        if st.button("🔄 Refresh", use_container_width=True):
-            st.rerun()
-    with b_col2:
-        if st.button("⚡ Test Data", use_container_width=True, help="Insert sample queue and RFID data directly into Supabase"):
-            save_queue_statistics({
-                "Student Queue": {"occupancy": 4, "entries": 12, "exits": 8, "average_wait_seconds": 100},
-                "Faculty Queue": {"occupancy": 1, "entries": 5, "exits": 4, "average_wait_seconds": 25}
-            }, save_history=True)
-            save_attendance_event("7b8bf206", "24BCE8221", "G.Prasanth Paul", "ENTRY")
-            st.toast("✅ Sample test data sent to Supabase!")
-            time.sleep(0.5)
-            st.rerun()
+    if st.button("🔄 Refresh Data", use_container_width=True):
+        st.rerun()
+
 
 
 # Fetch latest data
@@ -392,19 +381,13 @@ with tab_overview:
                 st.progress(ratio)
     else:
         st.markdown("""
-        <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.15); border-radius: 12px; padding: 30px; text-align: center; color: #94a3b8; margin-bottom: 15px;">
+        <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.15); border-radius: 12px; padding: 30px; text-align: center; color: #94a3b8;">
             <div style="font-size: 2rem; margin-bottom: 10px;">☷</div>
-            <strong>No Active Queues Detected Yet</strong>
-            <p style="margin-top: 5px; font-size: 0.9rem;">Run <code>monitor.py</code> with a camera or video to feed real-time detections, or click below to populate instant sample data.</p>
+            <strong>No Active Queues Detected</strong>
+            <p style="margin-top: 5px; font-size: 0.9rem;">Run <code>monitor.py</code> locally with a camera or video to feed real-time YOLO detections to this dashboard.</p>
         </div>
         """, unsafe_allow_html=True)
-        if st.button("🚀 Populate Sample Data to Supabase Now", type="primary"):
-            save_queue_statistics({
-                "Student Queue": {"occupancy": 4, "entries": 12, "exits": 8, "average_wait_seconds": 100},
-                "Faculty Queue": {"occupancy": 1, "entries": 5, "exits": 4, "average_wait_seconds": 25}
-            }, save_history=True)
-            save_attendance_event("7b8bf206", "24BCE8221", "G.Prasanth Paul", "ENTRY")
-            st.rerun()
+
 
 
 # ==============================================================================

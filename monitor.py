@@ -106,9 +106,9 @@ def async_frame_worker():
                 except (PermissionError, OSError):
                     pass
 
-                # Dispatch to separate cloud worker (every 1.5s, non-blocking)
+                # Dispatch to separate cloud worker (every 0.5s, non-blocking)
                 now_c = time.monotonic()
-                if now_c - last_cloud_dispatch >= 1.5:
+                if now_c - last_cloud_dispatch >= 0.5:
                     last_cloud_dispatch = now_c
                     if w > 540:
                         c_scale = 540 / w

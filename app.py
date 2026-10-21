@@ -10,16 +10,25 @@ except ImportError:
     pass
 
 from database import (get_queue_statistics, get_attendance_events, get_attendance_summary,
+                      get_attendance_payload,
                       get_queue_alert_limits, save_queue_alert_limit,
                       get_queue_history, get_queue_history_summary,
                       get_historical_videos, get_historical_queue_names,
-                      get_live_frame, get_hardware_status)
+                      get_live_frame, get_hardware_status, save_attendance_event)
 from arduino_queue_bridge import bridge
 
 app = Flask(__name__)
 BASE_DIR = Path(__file__).resolve().parent
 LIVE_FRAME_PATH = BASE_DIR / "static" / "live_frame.jpg"
 SERVICE_SECONDS_PER_PERSON = int(os.getenv("SERVICE_SECONDS_PER_PERSON", 25))
+
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    return response
 
 
 @app.route("/")
@@ -77,7 +86,8 @@ def get_stats():
         "recommended_wait_seconds": shortest_wait,
         "monitoring": bool(queues),
         "alert_limits": limits,
-        "arduino": bridge.status()
+        "arduino": bridge.status(),
+        "attendance_summary": get_attendance_summary()
     })
 
 
@@ -164,9 +174,10 @@ def attendance():
         limit = int(request.args.get("limit", 200))
     except ValueError:
         limit = 200
+    events, summary = get_attendance_payload(limit, request.args.get("search"))
     return jsonify({
-        "events": get_attendance_events(limit, request.args.get("search")),
-        "summary": get_attendance_summary()
+        "events": events,
+        "summary": summary
     })
 
 
@@ -231,27 +242,44 @@ def generate_video_stream():
 
     while True:
         try:
+            now_sec = time.time()
             if LIVE_FRAME_PATH.exists():
                 try:
-                    mtime = LIVE_FRAME_PATH.stat().st_mtime_ns
+                    stat = LIVE_FRAME_PATH.stat()
+                    mtime = stat.st_mtime_ns
+                    file_age = now_sec - stat.st_mtime
                 except (FileNotFoundError, PermissionError):
                     mtime = None
-                if mtime is not None and mtime != last_mtime:
-                    try:
-                        with open(LIVE_FRAME_PATH, "rb") as f:
-                            frame = f.read()
-                    except (FileNotFoundError, PermissionError, OSError):
-                        frame = None
-                    if frame and len(frame) > 4 and frame.startswith(b"\xff\xd8"):
-                        last_mtime = mtime
-                        has_sent_standby = False
+                    file_age = 999.0
+
+                if file_age <= 3.0:
+                    if mtime is not None and mtime != last_mtime:
+                        try:
+                            with open(LIVE_FRAME_PATH, "rb") as f:
+                                frame = f.read()
+                        except (FileNotFoundError, PermissionError, OSError):
+                            frame = None
+                        if frame and len(frame) > 4 and frame.startswith(b"\xff\xd8"):
+                            last_mtime = mtime
+                            has_sent_standby = False
+                            yield (
+                                b"--frame\r\n"
+                                b"Content-Type: image/jpeg\r\n"
+                                b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
+                                b"Cache-Control: no-cache\r\n\r\n"
+                                + frame + b"\r\n"
+                            )
+                else:
+                    if not has_sent_standby and standby_bytes:
+                        has_sent_standby = True
                         yield (
                             b"--frame\r\n"
                             b"Content-Type: image/jpeg\r\n"
-                            b"Content-Length: " + str(len(frame)).encode() + b"\r\n"
+                            b"Content-Length: " + str(len(standby_bytes)).encode() + b"\r\n"
                             b"Cache-Control: no-cache\r\n\r\n"
-                            + frame + b"\r\n"
+                            + standby_bytes + b"\r\n"
                         )
+                    time.sleep(0.2)
             else:
                 # Cloud frame fallback
                 c_frame, c_ts = get_live_frame()
@@ -274,10 +302,13 @@ def generate_video_stream():
                         b"Cache-Control: no-cache\r\n\r\n"
                         + standby_bytes + b"\r\n"
                     )
-                time.sleep(0.4)
+                time.sleep(0.3)
+        except (GeneratorExit, StopIteration):
+            break
         except Exception:
-            time.sleep(0.05)
-        time.sleep(0.03)
+            # Client disconnected or broken socket - terminate generator cleanly
+            break
+        time.sleep(0.015)
 
 
 @app.route("/video_feed")

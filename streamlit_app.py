@@ -280,9 +280,9 @@ tab_overview, tab_video, tab_attendance, tab_limits, tab_history, tab_supabase =
 
 
 # ==============================================================================
-# TAB 1: OVERVIEW (Isolated 2s Fragment — Zero Page Flicker)
+# TAB 1: OVERVIEW (Isolated 1.0s Fragment — Real-Time Live Metrics)
 # ==============================================================================
-@st.fragment(run_every=2)
+@st.fragment(run_every=1.0)
 def render_overview_fragment():
     queues = get_queue_statistics(max_age_seconds=15)
     limits = get_queue_alert_limits()
@@ -449,13 +449,14 @@ with tab_overview:
 
 
 # ==============================================================================
-# TAB 2: LIVE CAMERA FEED (Isolated 1.5s Fragment — Zero Dimming or Flash)
+# TAB 2: LIVE CAMERA FEED (Direct 30 FPS Stream + Cloud Synced Mode)
 # ==============================================================================
-@st.fragment(run_every=1.5)
-def render_live_camera_fragment():
-    st.markdown("### 📹 Live Camera & YOLO Tracking Feed")
+@st.fragment(run_every=0.8)
+def render_cloud_camera_fragment():
     col_v1, col_v2 = st.columns([3, 1])
 
+    cloud_bytes = None
+    cloud_ts = None
     with col_v1:
         frame_rendered = False
         # 1. Try reading local file bytes directly
@@ -464,17 +465,17 @@ def render_live_camera_fragment():
                 local_bytes = LIVE_FRAME_PATH.read_bytes()
                 if len(local_bytes) > 10 and local_bytes.startswith(b"\xff\xd8"):
                     mtime = os.path.getmtime(LIVE_FRAME_PATH)
-                    st.image(local_bytes, caption=f"Local Camera Stream · Updated {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
+                    st.image(local_bytes, caption=f"Local Frame Buffer · {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
                     frame_rendered = True
             except Exception:
                 pass
-        
+
         # 2. Fall back to cloud frame from Supabase
         if not frame_rendered:
             cloud_bytes, cloud_ts = get_live_frame()
             if cloud_bytes and len(cloud_bytes) > 10:
                 try:
-                    st.image(cloud_bytes, caption=f"Cloud YOLO Live Stream · Synced from monitor.py ({cloud_ts})", use_container_width=True)
+                    st.image(cloud_bytes, caption=f"Cloud YOLO Live Stream · Synced ({cloud_ts})", use_container_width=True)
                     frame_rendered = True
                 except Exception:
                     pass
@@ -491,7 +492,8 @@ def render_live_camera_fragment():
     with col_v2:
         st.markdown("#### Stream Diagnostics")
         has_local = LIVE_FRAME_PATH.exists()
-        cloud_bytes, cloud_ts = get_live_frame()
+        if cloud_bytes is None and not has_local:
+            cloud_bytes, cloud_ts = get_live_frame()
         has_cloud = bool(cloud_bytes)
         status_label = "🟢 Receiving (Local)" if has_local else ("🟢 Receiving (Cloud Sync)" if has_cloud else "⚪ Waiting for Stream")
         st.markdown(f"**Status:** {status_label}")
@@ -503,16 +505,246 @@ def render_live_camera_fragment():
         - 🟦 Blue Polygon: Monitored Queue Zone
         - 🟥 Red Highlight: Over-Capacity Queue
         """)
-        st.caption("Auto-refreshing in place every 1.5s (Zero page reload)")
+        st.caption("⚡ Cloud fragment auto-refreshing at 0.8s")
 
 with tab_video:
-    render_live_camera_fragment()
+    st.markdown("### 📹 Live Camera & YOLO Tracking Feed")
+    stream_choice = st.radio(
+        "Playback Mode",
+        ["⚡ Direct 30 FPS Stream (Zero Lag · Recommended)", "☁️ Database Synced Feed (Cloud Mode)"],
+        horizontal=True,
+        key="stream_playback_mode"
+    )
+    if "Direct" in stream_choice:
+        import streamlit.components.v1 as components
+        components.html("""
+        <!DOCTYPE html>
+        <html>
+        <head>
+        <meta charset="utf-8">
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+          body { background: transparent; overflow: hidden; }
+          .video-container {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 16 / 9;
+            max-height: 480px;
+            background: #080d18;
+            border: 1px solid rgba(140, 163, 197, 0.2);
+            border-radius: 12px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+          }
+          #stream-img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            display: block;
+          }
+          .hud-badge {
+            position: absolute;
+            top: 14px;
+            left: 14px;
+            padding: 6px 14px;
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 20px;
+            color: #e2e8f0;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            pointer-events: none;
+            z-index: 10;
+          }
+          .dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+            box-shadow: 0 0 8px #22c55e;
+            animation: pulse 2s infinite;
+          }
+          .dot.yellow { background: #eab308; box-shadow: 0 0 8px #eab308; }
+          .dot.red { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+          @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.9); }
+          }
+          .hud-controls {
+            position: absolute;
+            top: 14px;
+            right: 14px;
+            display: flex;
+            gap: 8px;
+            z-index: 10;
+          }
+          .btn-icon {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #cbd5e1;
+            border-radius: 8px;
+            padding: 6px 10px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+          }
+          .btn-icon:hover { background: rgba(30, 41, 59, 0.9); color: #fff; }
+          #standby-card {
+            display: none;
+            text-align: center;
+            color: #94a3b8;
+            padding: 30px;
+            max-width: 440px;
+          }
+          #standby-card h4 { color: #f1f5f9; font-size: 1.15rem; margin-bottom: 8px; }
+          #standby-card p { font-size: 0.88rem; line-height: 1.5; margin-bottom: 14px; }
+          #standby-card code { background: rgba(255,255,255,0.08); padding: 3px 6px; border-radius: 4px; color: #38bdf8; }
+        </style>
+        </head>
+        <body>
+        <div class="video-container" id="player-container">
+          <div class="hud-badge" id="hud-badge">
+            <span class="dot" id="hud-dot"></span>
+            <span id="hud-text">Connecting to Live Stream…</span>
+          </div>
+          <div class="hud-controls">
+            <button class="btn-icon" onclick="toggleFullscreen()" title="Fullscreen">⛶ Fullscreen</button>
+            <button class="btn-icon" onclick="forceReconnect()" title="Reconnect">↻ Reconnect</button>
+          </div>
+          <img id="stream-img" alt="Live YOLO Queue Monitor">
+          <div id="standby-card">
+            <div style="font-size: 2.5rem; margin-bottom: 12px;">📹</div>
+            <h4>Live Stream Standby</h4>
+            <p>Waiting for live frames. Start <code>monitor.py</code> locally to begin real-time YOLO person detection & queue tracking.</p>
+            <button class="btn-icon" onclick="forceReconnect()">Retry Connection</button>
+          </div>
+        </div>
+
+        <script>
+          const host = window.location.hostname || "localhost";
+          const mjpegUrl = "http://" + host + ":5000/video_feed";
+          const staticUrl = "/app/static/live_frame.jpg";
+          const img = document.getElementById("stream-img");
+          const dot = document.getElementById("hud-dot");
+          const text = document.getElementById("hud-text");
+          const standby = document.getElementById("standby-card");
+
+          let mode = "mjpeg"; // "mjpeg" or "static_poll"
+          let pollTimer = null;
+          let connectionTimeout = null;
+
+          function setStatus(status, label) {
+            if (status === "live") {
+              dot.className = "dot";
+              text.textContent = label || "30 FPS Direct Live Feed";
+              img.style.display = "block";
+              standby.style.display = "none";
+            } else if (status === "poll") {
+              dot.className = "dot yellow";
+              text.textContent = label || "⚡ Local Fast Buffer (25 FPS)";
+              img.style.display = "block";
+              standby.style.display = "none";
+            } else {
+              dot.className = "dot red";
+              text.textContent = label || "Stream Standby";
+              img.style.display = "none";
+              standby.style.display = "block";
+            }
+          }
+
+          function startMjpeg() {
+            mode = "mjpeg";
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            img.src = mjpegUrl + "?t=" + Date.now();
+            setStatus("live", "Connecting to 30 FPS Stream…");
+
+            clearTimeout(connectionTimeout);
+            connectionTimeout = setTimeout(() => {
+              if (mode === "mjpeg" && (!img.complete || img.naturalWidth === 0)) {
+                startStaticPoll();
+              }
+            }, 3000);
+          }
+
+          img.onload = () => {
+            clearTimeout(connectionTimeout);
+            if (mode === "mjpeg") {
+              setStatus("live", "30 FPS Direct Live Feed");
+            }
+          };
+
+          img.onerror = () => {
+            clearTimeout(connectionTimeout);
+            if (mode === "mjpeg") {
+              startStaticPoll();
+            } else {
+              setStatus("error", "Waiting for monitor.py");
+            }
+          };
+
+          function startStaticPoll() {
+            mode = "static_poll";
+            clearTimeout(connectionTimeout);
+            if (pollTimer) clearInterval(pollTimer);
+
+            let isFetching = false;
+            const fetchNext = () => {
+              if (isFetching) return;
+              isFetching = true;
+              const testImg = new Image();
+              testImg.onload = () => {
+                img.src = testImg.src;
+                setStatus("poll", "⚡ Local Fast Buffer (25 FPS)");
+                isFetching = false;
+              };
+              testImg.onerror = () => {
+                isFetching = false;
+                setStatus("error", "Waiting for monitor.py");
+              };
+              testImg.src = staticUrl + "?t=" + Date.now();
+            };
+
+            fetchNext();
+            pollTimer = setInterval(fetchNext, 40); // 25 FPS
+          }
+
+          function forceReconnect() {
+            startMjpeg();
+          }
+
+          function toggleFullscreen() {
+            const el = document.getElementById("player-container");
+            if (!document.fullscreenElement) {
+              if (el.requestFullscreen) el.requestFullscreen();
+              else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+            } else {
+              if (document.exitFullscreen) document.exitFullscreen();
+            }
+          }
+
+          // Start stream
+          startMjpeg();
+        </script>
+        </body>
+        </html>
+        """, height=480)
+        st.caption("⚡ Direct 30 FPS hardware-accelerated video stream with intelligent auto-failover.")
+    else:
+        render_cloud_camera_fragment()
 
 
 # ==============================================================================
-# TAB 3: RFID ATTENDANCE (Isolated 1.5s Fragment — Real-Time Updates)
+# TAB 3: RFID ATTENDANCE (Isolated 1.0s Fragment — Instant Real-Time Updates)
 # ==============================================================================
-@st.fragment(run_every=1.5)
+@st.fragment(run_every=1.0)
 def render_attendance_fragment():
     st.markdown("### 🪪 Student RFID Attendance Records")
     

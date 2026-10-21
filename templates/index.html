@@ -435,6 +435,10 @@
             data.recommended_wait_seconds !== undefined
             ? formatWait(data.recommended_wait_seconds)
             : "--";
+
+        if (data.arduino) {
+          updateArduinoBadge(data.arduino);
+        }
       } catch (error) {
         setStatus(false);
         console.error("QueueSense dashboard update failed:", error);
@@ -632,20 +636,46 @@
       }
     }
 
-    async function loadAttendance() {
+    function updateArduinoBadge(data) {
+      const label = document.getElementById("arduino-status");
+      if (!label || !data) return;
+      label.textContent = data.connected ? `Connected · ${data.port || "USB"}${data.alert_active ? " · BUZZER SOUNDING!" : ""}` : `Arduino disconnected${data.port ? " · " + data.port : ""}`;
+      label.className = "chart-tag " + (data.connected ? "connected" : "disconnected") + (data.alert_active ? " status-red" : "");
+      label.title = data.last_error || "";
+    }
+
+    let isAttendanceFetching = false;
+    let lastLatestEventId = null;
+    let lastTotalEvents = -1;
+
+    async function loadAttendance(force = false) {
+      if (isAttendanceFetching) return;
+      isAttendanceFetching = true;
       const rows = document.getElementById("attendance-rows");
-      const search = document.getElementById("attendance-search").value.trim();
+      const searchInput = document.getElementById("attendance-search");
+      const search = searchInput ? searchInput.value.trim() : "";
       try {
         const response = await fetch(`/api/attendance?limit=200&search=${encodeURIComponent(search)}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("Unable to load attendance");
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Unable to load attendance");
         const summary = data.summary || {};
         const values = [summary.total_events || 0, summary.total_entries || 0, summary.total_exits || 0, summary.unique_students || 0];
-        document.getElementById("attendance-summary").innerHTML = ["Total scans", "Entries", "Exits", "Students"].map((label, i) => `<div><span>${label}</span><strong>${values[i]}</strong></div>`).join("");
+
         const events = data.events || [];
+        const currentLatestId = events.length > 0 ? events[0].id : 0;
+        const currentTotal = summary.total_events || 0;
+
+        // Skip DOM rewrite if neither latest event nor total count changed (unless searching or forced)
+        if (!force && !search && currentLatestId === lastLatestEventId && currentTotal === lastTotalEvents) {
+          return;
+        }
+        lastLatestEventId = currentLatestId;
+        lastTotalEvents = currentTotal;
+
+        document.getElementById("attendance-summary").innerHTML = ["Total scans", "Entries", "Exits", "Students"].map((label, i) => `<div><span>${label}</span><strong>${values[i]}</strong></div>`).join("");
         rows.innerHTML = events.length ? events.map(e => `<tr><td>${escapeHtml(e.event_time || "")}</td><td><strong>${escapeHtml(e.student_name || "Unknown")}</strong></td><td>${escapeHtml(e.roll_number || "—")}</td><td><code>${escapeHtml(e.card_uid || "")}</code></td><td><span class="event-badge ${String(e.event_type).toLowerCase()}">${escapeHtml(e.event_type || "")}</span></td></tr>`).join("") : '<tr><td colspan="5">No attendance records found.</td></tr>';
         document.getElementById("attendance-message").textContent = `${events.length} records`;
-        
+
         const rfidChip = document.getElementById("rfid-chip");
         if (rfidChip) {
           if (events.length > 0) {
@@ -656,42 +686,66 @@
           }
         }
       } catch (error) {
-        rows.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`;
+        if (!rows.hasChildNodes() || rows.children.length === 0) {
+          rows.innerHTML = `<tr><td colspan="5">${escapeHtml(error.message)}</td></tr>`;
+        }
+      } finally {
+        isAttendanceFetching = false;
       }
     }
 
     async function refreshArduinoStatus() {
-      const label = document.getElementById("arduino-status");
       try {
         const response = await fetch("/api/arduino/status", { cache: "no-store" });
-        const data = await response.json();
-        label.textContent = data.connected ? `Connected · ${data.port || "USB"}${data.alert_active ? " · BUZZER SOUNDING!" : ""}` : `Arduino disconnected${data.port ? " · " + data.port : ""}`;
-        label.className = "chart-tag " + (data.connected ? "connected" : "disconnected") + (data.alert_active ? " status-red" : "");
-        label.title = data.last_error || "";
+        if (response.ok) {
+          const data = await response.json();
+          updateArduinoBadge(data);
+        }
       } catch (e) {
-        label.textContent = "Arduino status unavailable";
+        // Handled silently
       }
     }
 
-    document.getElementById("refresh-attendance").addEventListener("click", loadAttendance);
+    document.getElementById("refresh-attendance").addEventListener("click", () => loadAttendance(true));
     document.getElementById("attendance-search").addEventListener("input", () => {
       clearTimeout(window.attendanceSearchTimer);
-      window.attendanceSearchTimer = setTimeout(loadAttendance, 250);
+      window.attendanceSearchTimer = setTimeout(() => loadAttendance(true), 250);
     });
 
     // Initial loads
     loadAlertLimits();
-    loadAttendance();
+    loadAttendance(true);
     refreshArduinoStatus();
     refreshHistoryFilters();
     updateDashboard();
     updateClock();
 
-    // Auto-refresh timers: Real-time 1s attendance and queue metrics
-    setInterval(updateDashboard, 1000);
+    // Non-overlapping loop scheduling to prevent HTTP request piling / latency spikes
+    let isDashboardFetching = false;
+    async function runDashboardLoop() {
+      if (!isDashboardFetching) {
+        isDashboardFetching = true;
+        try {
+          await updateDashboard();
+        } finally {
+          isDashboardFetching = false;
+        }
+      }
+      setTimeout(runDashboardLoop, 750);
+    }
+
+    async function runAttendanceLoop() {
+      if (!isAttendanceFetching) {
+        await loadAttendance();
+      }
+      setTimeout(runAttendanceLoop, 500);
+    }
+
+    // Start background loops
+    runDashboardLoop();
+    runAttendanceLoop();
     setInterval(updateClock, 1000);
-    setInterval(loadAttendance, 1000);
-    setInterval(refreshArduinoStatus, 1500);
+    setInterval(refreshArduinoStatus, 3000);
     setInterval(refreshHistoryFilters, 30000);
   </script>
 </body>

@@ -1,4 +1,5 @@
 import os
+import time
 import sqlite3
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -518,6 +519,19 @@ def initialize_integration_tables():
                     VALUES(?,?,?) ON CONFLICT(queue_name) DO NOTHING""", (name, limit_value, current_timestamp()))
 
 
+_attendance_cache = {
+    "summary": None,
+    "summary_ts": 0.0,
+    "events": None,
+    "events_ts": 0.0,
+}
+
+
+def invalidate_attendance_cache():
+    _attendance_cache["summary_ts"] = 0.0
+    _attendance_cache["events_ts"] = 0.0
+
+
 def save_attendance_event(card_uid, roll_number, student_name, event_type, event_time=None):
     uid = str(card_uid).strip().lower()
     event_type = str(event_type).strip().upper()
@@ -526,6 +540,7 @@ def save_attendance_event(card_uid, roll_number, student_name, event_type, event
     if event_type not in ("ENTRY", "EXIT", "UNKNOWN"):
         raise ValueError("Invalid attendance event type")
     stamp = event_time or current_timestamp()
+    invalidate_attendance_cache()
     with get_connection() as connection:
         if is_postgres():
             cur = connection.execute(
@@ -551,7 +566,12 @@ def save_attendance_event(card_uid, roll_number, student_name, event_type, event
             return cur.lastrowid
 
 
-def get_attendance_events(limit=200, search=None):
+def get_attendance_payload(limit=200, search=None):
+    """Fetch attendance events and summary in a single database round-trip."""
+    now_m = time.monotonic()
+    if not search and limit == 200 and (now_m - _attendance_cache["events_ts"] < 0.5) and _attendance_cache["events"] is not None and _attendance_cache["summary"] is not None:
+        return _attendance_cache["events"], _attendance_cache["summary"]
+
     limit = max(1, min(int(limit), 5000))
     query = "SELECT id,card_uid,roll_number,student_name,event_type,event_time FROM attendance_events"
     params = []
@@ -561,25 +581,48 @@ def get_attendance_events(limit=200, search=None):
         params.extend([term] * 4)
     query += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
+
     with get_connection() as connection:
         rows = connection.execute(query, params).fetchall()
-    return [dict(row) for row in rows]
+        events = [dict(row) for row in rows]
+
+        row = connection.execute("""
+            SELECT 
+                COUNT(*) AS total_events,
+                COUNT(CASE WHEN event_type = 'ENTRY' THEN 1 END) AS total_entries,
+                COUNT(CASE WHEN event_type = 'EXIT' THEN 1 END) AS total_exits,
+                COUNT(DISTINCT CASE WHEN roll_number IS NOT NULL AND roll_number != '' AND event_type IN ('ENTRY', 'EXIT') THEN roll_number END) AS unique_students
+            FROM attendance_events
+        """).fetchone()
+
+    if row:
+        d = dict(row)
+        summary = {
+            "total_events": int(d.get("total_events", 0) or 0),
+            "total_entries": int(d.get("total_entries", 0) or 0),
+            "total_exits": int(d.get("total_exits", 0) or 0),
+            "unique_students": int(d.get("unique_students", 0) or 0)
+        }
+    else:
+        summary = {"total_events": 0, "total_entries": 0, "total_exits": 0, "unique_students": 0}
+
+    if not search and limit == 200:
+        _attendance_cache["events"] = events
+        _attendance_cache["summary"] = summary
+        _attendance_cache["events_ts"] = now_m
+        _attendance_cache["summary_ts"] = now_m
+
+    return events, summary
+
+
+def get_attendance_events(limit=200, search=None):
+    events, _ = get_attendance_payload(limit=limit, search=search)
+    return events
 
 
 def get_attendance_summary():
-    with get_connection() as connection:
-        total = connection.execute("SELECT COUNT(*) n FROM attendance_events").fetchone()["n"]
-        entries = connection.execute("SELECT COUNT(*) n FROM attendance_events WHERE event_type='ENTRY'").fetchone()["n"]
-        exits = connection.execute("SELECT COUNT(*) n FROM attendance_events WHERE event_type='EXIT'").fetchone()["n"]
-        students = connection.execute(
-            "SELECT COUNT(DISTINCT roll_number) n FROM attendance_events WHERE roll_number IS NOT NULL AND roll_number!='' AND event_type IN ('ENTRY','EXIT')"
-        ).fetchone()["n"]
-    return {
-        "total_events": int(total or 0),
-        "total_entries": int(entries or 0),
-        "total_exits": int(exits or 0),
-        "unique_students": int(students or 0)
-    }
+    _, summary = get_attendance_payload(limit=200, search=None)
+    return summary
 
 
 def get_queue_alert_limits():
@@ -648,14 +691,23 @@ def update_live_frame(frame_bytes):
     set_system_state("live_frame", b64_str)
 
 
+_live_frame_cache = {"bytes": None, "updated_at": None, "ts": 0.0}
+
+
 def get_live_frame():
     """Retrieve the latest live frame from system_state, returning (frame_bytes, updated_at) or (None, None)."""
+    global _live_frame_cache
+    now_m = time.monotonic()
+    if now_m - _live_frame_cache["ts"] < 0.3 and _live_frame_cache["bytes"] is not None:
+        return _live_frame_cache["bytes"], _live_frame_cache["updated_at"]
+
     import base64
     st = get_system_state("live_frame")
     if not st:
         return None, None
     try:
         raw = base64.b64decode(st["value"])
+        _live_frame_cache = {"bytes": raw, "updated_at": st["updated_at"], "ts": now_m}
         return raw, st["updated_at"]
     except Exception:
         return None, None

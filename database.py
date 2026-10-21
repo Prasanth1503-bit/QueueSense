@@ -314,6 +314,12 @@ def save_queue_statistics(statistics, save_history=False, video_hash=None, sessi
     timestamp = current_timestamp()
     resolved_video_name = resolve_video_display_name(video_hash, video_name)
     with get_connection() as connection:
+        if statistics:
+            placeholders = ",".join(["?"] * len(statistics))
+            connection.execute(f"DELETE FROM queue_status WHERE queue_name NOT IN ({placeholders})", tuple(statistics.keys()))
+        else:
+            connection.execute("DELETE FROM queue_status")
+
         for queue_name, values in statistics.items():
             occupancy = max(0, int(values.get("occupancy", 0) or 0))
             entries = max(0, int(values.get("entries", 0) or 0))
@@ -338,13 +344,29 @@ def save_queue_statistics(statistics, save_history=False, video_hash=None, sessi
                      video_hash, session_id, resolved_video_name))
 
 
-def get_queue_statistics():
+def get_queue_statistics(max_age_seconds=20):
     with get_connection() as connection:
         rows = connection.execute("""SELECT queue_name, occupancy, total_entries, total_exits,
             average_wait_seconds, updated_at FROM queue_status ORDER BY queue_name""").fetchall()
-    return {row["queue_name"]: {"occupancy": row["occupancy"], "entries": row["total_entries"],
-            "exits": row["total_exits"], "average_wait_seconds": row["average_wait_seconds"],
-            "updated_at": row["updated_at"]} for row in rows}
+    now_dt = datetime.now().astimezone()
+    res = {}
+    for row in rows:
+        upd = row["updated_at"]
+        if max_age_seconds is not None and upd:
+            try:
+                dt = datetime.fromisoformat(upd)
+                if (now_dt - dt).total_seconds() > max_age_seconds:
+                    continue
+            except Exception:
+                pass
+        res[row["queue_name"]] = {
+            "occupancy": row["occupancy"],
+            "entries": row["total_entries"],
+            "exits": row["total_exits"],
+            "average_wait_seconds": row["average_wait_seconds"],
+            "updated_at": row["updated_at"]
+        }
+    return res
 
 
 def get_queue_history(queue_name=None, hours=24, limit=1000, video_hash=None, session_id=None):

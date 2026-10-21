@@ -804,6 +804,12 @@ queue_manager = QueueManager(
     lost_track_timeout=5.0               # Tolerate short tracking interruptions
 )
 
+# Clear any lingering queues from previous sessions so only current queues are active
+try:
+    reset_queue_status()
+except Exception:
+    pass
+
 print("\nQueue monitoring started.")
 
 print(

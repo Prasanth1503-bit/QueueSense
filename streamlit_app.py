@@ -435,25 +435,34 @@ with tab_overview:
 # TAB 2: LIVE CAMERA FEED
 # ==============================================================================
 with tab_video:
-    st.markdown("### Live Camera & YOLO Tracking Feed")
+    col_vh1, col_vh2 = st.columns([2, 1])
+    with col_vh1:
+        st.markdown("### 📹 Live Camera & YOLO Tracking Feed")
+    with col_vh2:
+        auto_stream = st.checkbox("🔴 Auto-update video (1s)", value=True, key="live_video_autorefresh")
+
     col_v1, col_v2 = st.columns([3, 1])
     with col_v1:
         frame_rendered = False
+        # 1. Try reading local file bytes directly
         if LIVE_FRAME_PATH.exists():
             try:
-                mtime = os.path.getmtime(LIVE_FRAME_PATH)
-                st.image(str(LIVE_FRAME_PATH), caption=f"Local YOLO Stream · Last update {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
-                frame_rendered = True
-            except Exception as e:
+                local_bytes = LIVE_FRAME_PATH.read_bytes()
+                if len(local_bytes) > 10 and local_bytes.startswith(b"\xff\xd8"):
+                    mtime = os.path.getmtime(LIVE_FRAME_PATH)
+                    st.image(local_bytes, caption=f"Local Camera Stream · Last update {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
+                    frame_rendered = True
+            except Exception:
                 pass
         
+        # 2. Fall back to cloud frame from Supabase
         if not frame_rendered:
             cloud_bytes, cloud_ts = get_live_frame()
-            if cloud_bytes:
+            if cloud_bytes and len(cloud_bytes) > 10:
                 try:
                     st.image(cloud_bytes, caption=f"Cloud YOLO Live Stream · Synced from monitor.py ({cloud_ts})", use_container_width=True)
                     frame_rendered = True
-                except Exception as e:
+                except Exception:
                     pass
 
         if not frame_rendered:
@@ -461,7 +470,7 @@ with tab_video:
             <div style="background: #1e293b; border-radius: 12px; height: 350px; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #94a3b8;">
                 <div style="font-size: 3rem; margin-bottom: 10px;">📹</div>
                 <strong>Waiting for Video Frames</strong>
-                <p style="font-size: 0.9rem; margin-top: 6px;">Start <code>monitor.py</code> to stream annotated live YOLO person detection.</p>
+                <p style="font-size: 0.9rem; margin-top: 6px;">Start <code>monitor.py</code> locally to stream annotated live YOLO person detection.</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -482,6 +491,10 @@ with tab_video:
         """)
         if st.button("🔄 Refresh Stream Frame", type="primary", use_container_width=True):
             st.rerun()
+
+    if auto_stream:
+        time.sleep(1.0)
+        st.rerun()
 
 # ==============================================================================
 # TAB 3: RFID ATTENDANCE

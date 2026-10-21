@@ -67,7 +67,10 @@ def get_stats():
             shortest_wait = wait
             shortest = name
 
-    bridge.update_hardware_alerts(queues)
+    if not queues:
+        bridge.set_buzzer(False)
+    else:
+        bridge.update_hardware_alerts(queues)
     return jsonify({
         "queues": queues,
         "recommended_queue": shortest,

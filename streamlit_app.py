@@ -157,7 +157,16 @@ st.markdown("""
         border-radius: 20px;
         font-size: 0.8rem;
         font-weight: 600;
-        display: inline-block;
+    /* Stop screen dimming, fading, and flickering during auto-refresh */
+    .stApp[data-test-script-state="running"] [data-testid="stMainBlockContainer"],
+    .stApp[data-test-script-state="running"] .main,
+    .stApp[data-test-script-state="running"] header {
+        opacity: 1 !important;
+        filter: none !important;
+        transition: none !important;
+    }
+    div[data-testid="stStatusWidget"] {
+        display: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -181,12 +190,11 @@ with st.sidebar:
         st.markdown(f'<div class="db-pill-local">📁 Local SQLite Database</div>', unsafe_allow_html=True)
         st.caption("Add `DATABASE_URL` in secrets to switch to Supabase PostgreSQL.")
 
-
     st.markdown("---")
     
-    # Auto-refresh option
-    auto_refresh = st.checkbox("Auto-refresh data", value=True)
-    refresh_rate = st.slider("Refresh interval (seconds)", min_value=1, max_value=30, value=3)
+    # Auto-refresh option (default disabled so it doesn't flicker)
+    auto_refresh = st.checkbox("Auto-refresh data", value=False)
+    refresh_rate = st.slider("Refresh interval (seconds)", min_value=2, max_value=60, value=5)
     
     st.markdown("---")
     
@@ -208,14 +216,27 @@ with st.sidebar:
     st.caption("QueueSense v2.0 · Streamlit & Supabase Edition")
 
 # Top Header Banner
-col_head1, col_head2 = st.columns([3, 1])
+col_head1, col_head2 = st.columns([2.5, 1.5])
 with col_head1:
     st.markdown('<div class="brand-title">QueueSense Intelligence</div>', unsafe_allow_html=True)
     st.markdown('<div class="brand-sub">Real-Time Queue Monitoring, RFID Attendance & Hardware Alarm Controls</div>', unsafe_allow_html=True)
 with col_head2:
     st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-    if st.button("🔄 Manual Refresh"):
-        st.rerun()
+    b_col1, b_col2 = st.columns(2)
+    with b_col1:
+        if st.button("🔄 Refresh", use_container_width=True):
+            st.rerun()
+    with b_col2:
+        if st.button("⚡ Test Data", use_container_width=True, help="Insert sample queue and RFID data directly into Supabase"):
+            save_queue_statistics({
+                "Student Queue": {"occupancy": 4, "entries": 12, "exits": 8, "average_wait_seconds": 100},
+                "Faculty Queue": {"occupancy": 1, "entries": 5, "exits": 4, "average_wait_seconds": 25}
+            }, save_history=True)
+            save_attendance_event("7b8bf206", "24BCE8221", "G.Prasanth Paul", "ENTRY")
+            st.toast("✅ Sample test data sent to Supabase!")
+            time.sleep(0.5)
+            st.rerun()
+
 
 # Fetch latest data
 queues = get_queue_statistics()
@@ -371,12 +392,20 @@ with tab_overview:
                 st.progress(ratio)
     else:
         st.markdown("""
-        <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.15); border-radius: 12px; padding: 30px; text-align: center; color: #94a3b8;">
+        <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.15); border-radius: 12px; padding: 30px; text-align: center; color: #94a3b8; margin-bottom: 15px;">
             <div style="font-size: 2rem; margin-bottom: 10px;">☷</div>
-            <strong>No Active Queues Detected</strong>
-            <p style="margin-top: 5px; font-size: 0.9rem;">Run <code>monitor.py</code> locally with a camera or video to feed real-time YOLO detections to this dashboard.</p>
+            <strong>No Active Queues Detected Yet</strong>
+            <p style="margin-top: 5px; font-size: 0.9rem;">Run <code>monitor.py</code> with a camera or video to feed real-time detections, or click below to populate instant sample data.</p>
         </div>
         """, unsafe_allow_html=True)
+        if st.button("🚀 Populate Sample Data to Supabase Now", type="primary"):
+            save_queue_statistics({
+                "Student Queue": {"occupancy": 4, "entries": 12, "exits": 8, "average_wait_seconds": 100},
+                "Faculty Queue": {"occupancy": 1, "entries": 5, "exits": 4, "average_wait_seconds": 25}
+            }, save_history=True)
+            save_attendance_event("7b8bf206", "24BCE8221", "G.Prasanth Paul", "ENTRY")
+            st.rerun()
+
 
 # ==============================================================================
 # TAB 2: LIVE CAMERA FEED

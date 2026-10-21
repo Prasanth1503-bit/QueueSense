@@ -1,6 +1,7 @@
 """
 QueueSense – Smart Queue Intelligence System
-Streamlit Cloud & Local Dashboard
+Streamlit Cloud & Local Real-Time Dashboard
+Utilizes native Streamlit Fragments (@st.fragment) for fluid, zero-flicker, real-time live video and attendance updates.
 """
 
 import os
@@ -22,7 +23,8 @@ from database import (
     get_db_info,
     is_postgres,
     get_live_frame,
-    get_hardware_status
+    get_hardware_status,
+    save_attendance_event
 )
 
 # Optional hardware bridge import (if running on a machine with serial)
@@ -39,7 +41,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling (Dark Neon Aesthetics)
+# Custom Styling (Dark Neon Aesthetics + Total Dimming Suppression)
 st.markdown("""
 <style>
     /* Global styling */
@@ -64,12 +66,11 @@ st.markdown("""
     
     /* Metric Cards */
     .metric-box {
-        background: rgba(18, 24, 38, 0.8);
+        background: rgba(18, 24, 38, 0.85);
         border: 1px solid rgba(255, 255, 255, 0.08);
         border-radius: 12px;
         padding: 18px 20px;
         box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
-        backdrop-filter: blur(10px);
     }
     .metric-label {
         font-size: 0.82rem;
@@ -162,7 +163,7 @@ st.markdown("""
         display: inline-block;
     }
     
-    /* Stop screen dimming, fading, and flickering during auto-refresh across ALL containers */
+    /* Complete suppression of all dimming, fading, and flashing in Streamlit */
     .stApp,
     .main,
     header,
@@ -172,26 +173,42 @@ st.markdown("""
     [data-testid="stAppViewBlockContainer"],
     [data-testid="stAppViewContainer"],
     div[data-testid="stAppViewContainer"] > section:first-child,
+    .stApp[data-test-script-state="running"],
     .stApp[data-test-script-state="running"] [data-testid="stMainBlockContainer"],
     .stApp[data-test-script-state="running"] .main,
     .stApp[data-test-script-state="running"] header,
-    .stApp[data-test-script-state="running"] {
+    [data-test-script-state="running"] {
         opacity: 1 !important;
         filter: none !important;
         transition: none !important;
         animation: none !important;
     }
     
-    div[data-testid="stStatusWidget"] {
+    [data-test-script-state="running"] * {
+        opacity: 1 !important;
+        filter: none !important;
+        transition: none !important;
+    }
+    
+    /* Hide running widget spinner to stop visual blinking */
+    div[data-testid="stStatusWidget"],
+    .stStatusWidget {
+        display: none !important;
         visibility: hidden !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Path to live frame
 BASE_DIR = Path(__file__).resolve().parent
 LIVE_FRAME_PATH = BASE_DIR / "static" / "live_frame.jpg"
 SERVICE_SECONDS_PER_PERSON = int(os.getenv("SERVICE_SECONDS_PER_PERSON", 25))
+
+# Auto-start hardware bridge if running locally on a system with serial
+if bridge and not bridge.connected and not bridge.thread:
+    try:
+        bridge.start()
+    except Exception:
+        pass
 
 # Sidebar controls & Info
 with st.sidebar:
@@ -208,11 +225,10 @@ with st.sidebar:
         st.caption("Add `DATABASE_URL` in secrets to switch to Supabase PostgreSQL.")
 
     st.markdown("---")
-    
-    # Auto-refresh option (default disabled so it doesn't flicker)
-    auto_refresh = st.checkbox("Auto-refresh data", value=False)
-    refresh_rate = st.slider("Refresh interval (seconds)", min_value=2, max_value=60, value=5)
-    
+    st.markdown("### 🟢 Live Engine")
+    st.success("Active · Real-time auto-refreshing")
+    st.caption("Zero-flicker updates powered by Streamlit Fragments.")
+
     st.markdown("---")
     
     # Hardware Status
@@ -240,7 +256,7 @@ with st.sidebar:
         st.caption("Run `run_dashboard.bat` locally to link physical Arduino buzzer & RFID.")
 
     st.markdown("---")
-    st.caption("QueueSense v2.0 · Streamlit & Supabase Edition")
+    st.caption("QueueSense v2.0 · Fluid Cloud Edition")
 
 # Top Header Banner
 col_head1, col_head2 = st.columns([3, 1])
@@ -248,66 +264,9 @@ with col_head1:
     st.markdown('<div class="brand-title">QueueSense Intelligence</div>', unsafe_allow_html=True)
     st.markdown('<div class="brand-sub">Real-Time Queue Monitoring, RFID Attendance & Hardware Alarm Controls</div>', unsafe_allow_html=True)
 with col_head2:
-    st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-    if st.button("🔄 Refresh Data", use_container_width=True):
+    st.caption(f"Status: 🟢 Live · Auto-sync active")
+    if st.button("🔄 Refresh All Data", use_container_width=True):
         st.rerun()
-
-
-
-# Fetch latest data
-queues = get_queue_statistics(max_age_seconds=15)
-limits = get_queue_alert_limits()
-attendance_summary = get_attendance_summary()
-
-# Auto-start hardware bridge if running locally on a system with serial
-if bridge and not bridge.connected and not bridge.thread:
-    try:
-        bridge.start()
-    except Exception:
-        pass
-
-# Calculate totals
-total_waiting = sum(int(q.get("occupancy", 0) or 0) for q in queues.values())
-total_entries = sum(int(q.get("entries", 0) or 0) for q in queues.values())
-total_exits = sum(int(q.get("exits", 0) or 0) for q in queues.values())
-active_count = len(queues)
-
-# Find shortest queue recommendation
-shortest_queue = None
-shortest_wait = None
-lower_limits = {str(k).strip().lower(): v for k, v in limits.items()}
-
-for name, stats in queues.items():
-    occ = max(0, int(stats.get("occupancy", 0) or 0))
-    wait = occ * SERVICE_SECONDS_PER_PERSON
-    stats["estimated_wait_seconds"] = wait
-    
-    clean = str(name).strip().lower()
-    limit_info = limits.get(name) or lower_limits.get(clean)
-    limit_val = int(limit_info.get("limit_people", 5)) if limit_info else 5
-    stats["alert_limit"] = limit_val
-    stats["alert_active"] = occ > limit_val
-    
-    if occ > limit_val:
-        stats["status_color"] = "red"
-        stats["status_text"] = "OVER LIMIT"
-    elif occ >= max(1, limit_val - 1) and occ > 0:
-        stats["status_color"] = "yellow"
-        stats["status_text"] = "NEAR LIMIT"
-    else:
-        stats["status_color"] = "green"
-        stats["status_text"] = "NORMAL"
-
-    if shortest_wait is None or wait < shortest_wait:
-        shortest_wait = wait
-        shortest_queue = name
-
-# Synchronize hardware alerts if local bridge running
-if bridge:
-    try:
-        bridge.update_hardware_alerts(queues)
-    except Exception:
-        pass
 
 # Navigation Tabs
 tab_overview, tab_video, tab_attendance, tab_limits, tab_history, tab_supabase = st.tabs([
@@ -319,10 +278,55 @@ tab_overview, tab_video, tab_attendance, tab_limits, tab_history, tab_supabase =
     "☁️ Supabase Cloud Settings"
 ])
 
+
 # ==============================================================================
-# TAB 1: OVERVIEW
+# TAB 1: OVERVIEW (Isolated 2s Fragment — Zero Page Flicker)
 # ==============================================================================
-with tab_overview:
+@st.fragment(run_every=2)
+def render_overview_fragment():
+    queues = get_queue_statistics(max_age_seconds=15)
+    limits = get_queue_alert_limits()
+    attendance_summary = get_attendance_summary()
+
+    total_waiting = sum(int(q.get("occupancy", 0) or 0) for q in queues.values())
+    active_count = len(queues)
+
+    shortest_queue = None
+    shortest_wait = None
+    lower_limits = {str(k).strip().lower(): v for k, v in limits.items()}
+
+    for name, stats in queues.items():
+        occ = max(0, int(stats.get("occupancy", 0) or 0))
+        wait = occ * SERVICE_SECONDS_PER_PERSON
+        stats["estimated_wait_seconds"] = wait
+        
+        clean = str(name).strip().lower()
+        limit_info = limits.get(name) or lower_limits.get(clean)
+        limit_val = int(limit_info.get("limit_people", 5)) if limit_info else 5
+        stats["alert_limit"] = limit_val
+        stats["alert_active"] = occ > limit_val
+        
+        if occ > limit_val:
+            stats["status_color"] = "red"
+            stats["status_text"] = "OVER LIMIT"
+        elif occ >= max(1, limit_val - 1) and occ > 0:
+            stats["status_color"] = "yellow"
+            stats["status_text"] = "NEAR LIMIT"
+        else:
+            stats["status_color"] = "green"
+            stats["status_text"] = "NORMAL"
+
+        if shortest_wait is None or wait < shortest_wait:
+            shortest_wait = wait
+            shortest_queue = name
+
+    # Sync bridge if local
+    if bridge:
+        try:
+            bridge.update_hardware_alerts(queues)
+        except Exception:
+            pass
+
     # Metric KPI cards
     col1, col2, col3, col4 = st.columns(4)
     with col1:
@@ -410,7 +414,6 @@ with tab_overview:
                     </div>
                 </div>
                 """, unsafe_allow_html=True)
-                # Progress bar
                 ratio = min(1.0, max(0.0, occ / max(1, lim)))
                 st.progress(ratio)
     else:
@@ -424,19 +427,9 @@ with tab_overview:
 
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # RFID Attendance Quick Glance
-    st.markdown("### 🪪 RFID Attendance Quick Glance")
+    # Quick glance at latest attendance
+    st.markdown("### 🪪 Recent RFID Attendance Activity")
     recent_events = get_attendance_events(limit=5)
-    ac1, ac2, ac3, ac4 = st.columns(4)
-    with ac1:
-        st.metric("Total Scans", attendance_summary.get("total_events", 0))
-    with ac2:
-        st.metric("Entries (IN)", attendance_summary.get("total_entries", 0))
-    with ac3:
-        st.metric("Exits (OUT)", attendance_summary.get("total_exits", 0))
-    with ac4:
-        st.metric("Unique Students", attendance_summary.get("unique_students", 0))
-    
     if recent_events:
         rec_display = []
         for ev in recent_events:
@@ -451,19 +444,18 @@ with tab_overview:
     else:
         st.caption("No RFID cards scanned yet. Scan card on RFID reader to see live entries and exits.")
 
+with tab_overview:
+    render_overview_fragment()
 
 
 # ==============================================================================
-# TAB 2: LIVE CAMERA FEED
+# TAB 2: LIVE CAMERA FEED (Isolated 1.5s Fragment — Zero Dimming or Flash)
 # ==============================================================================
-with tab_video:
-    col_vh1, col_vh2 = st.columns([2, 1])
-    with col_vh1:
-        st.markdown("### 📹 Live Camera & YOLO Tracking Feed")
-    with col_vh2:
-        auto_stream = st.checkbox("🔴 Auto-update video (1s)", value=True, key="live_video_autorefresh")
-
+@st.fragment(run_every=1.5)
+def render_live_camera_fragment():
+    st.markdown("### 📹 Live Camera & YOLO Tracking Feed")
     col_v1, col_v2 = st.columns([3, 1])
+
     with col_v1:
         frame_rendered = False
         # 1. Try reading local file bytes directly
@@ -472,7 +464,7 @@ with tab_video:
                 local_bytes = LIVE_FRAME_PATH.read_bytes()
                 if len(local_bytes) > 10 and local_bytes.startswith(b"\xff\xd8"):
                     mtime = os.path.getmtime(LIVE_FRAME_PATH)
-                    st.image(local_bytes, caption=f"Local Camera Stream · Last update {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
+                    st.image(local_bytes, caption=f"Local Camera Stream · Updated {datetime.fromtimestamp(mtime).strftime('%H:%M:%S')}", use_container_width=True)
                     frame_rendered = True
             except Exception:
                 pass
@@ -489,10 +481,10 @@ with tab_video:
 
         if not frame_rendered:
             st.markdown("""
-            <div style="background: #1e293b; border-radius: 12px; height: 350px; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #94a3b8;">
+            <div style="background: #111b2b; border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; height: 350px; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #94a3b8;">
                 <div style="font-size: 3rem; margin-bottom: 10px;">📹</div>
-                <strong>Waiting for Video Frames</strong>
-                <p style="font-size: 0.9rem; margin-top: 6px;">Start <code>monitor.py</code> locally to stream annotated live YOLO person detection.</p>
+                <strong style="color: #cbd5e1; font-size: 1.1rem;">Waiting for Video Frames</strong>
+                <p style="font-size: 0.9rem; margin-top: 6px;">Start <code>monitor.py</code> locally to stream live YOLO person detection.</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -511,19 +503,21 @@ with tab_video:
         - 🟦 Blue Polygon: Monitored Queue Zone
         - 🟥 Red Highlight: Over-Capacity Queue
         """)
-        if st.button("🔄 Refresh Stream Frame", type="primary", use_container_width=True):
-            st.rerun()
+        st.caption("Auto-refreshing in place every 1.5s (Zero page reload)")
 
-    if auto_stream and not auto_refresh:
-        time.sleep(1.5)
-        st.rerun()
+with tab_video:
+    render_live_camera_fragment()
+
 
 # ==============================================================================
-# TAB 3: RFID ATTENDANCE
+# TAB 3: RFID ATTENDANCE (Isolated 1.5s Fragment — Real-Time Updates)
 # ==============================================================================
-with tab_attendance:
+@st.fragment(run_every=1.5)
+def render_attendance_fragment():
     st.markdown("### 🪪 Student RFID Attendance Records")
     
+    attendance_summary = get_attendance_summary()
+
     # Attendance KPIs
     ak1, ak2, ak3, ak4 = st.columns(4)
     with ak1:
@@ -551,29 +545,23 @@ with tab_attendance:
                     ("c189f968", "24BCA7285", "Pardha"),
                     ("d1b3d568", "24BES7016", "G.Aditya"),
                 ],
-                format_func=lambda s: f"{s[2]} ({s[1]}) — UID: {s[0]}"
+                format_func=lambda s: f"{s[2]} ({s[1]}) — UID: {s[0]}",
+                key="test_student_picker"
             )
         with sc2:
-            test_action = st.radio("Event Action", ["ENTRY", "EXIT"], horizontal=True)
+            test_action = st.radio("Event Action", ["ENTRY", "EXIT"], horizontal=True, key="test_action_radio")
         with sc3:
             st.markdown("<div style='height: 28px'></div>", unsafe_allow_html=True)
-            if st.button("📲 Tap Card", type="primary", use_container_width=True):
+            if st.button("📲 Tap Card", type="primary", use_container_width=True, key="btn_tap_card"):
                 uid, roll, sname = test_student
                 try:
                     save_attendance_event(uid, roll, sname, test_action)
                     st.success(f"Recorded {test_action} for {sname}!")
-                    time.sleep(0.4)
-                    st.rerun()
                 except Exception as ex:
                     st.error(f"Error saving attendance: {ex}")
     
-    # Search box & Refresh
-    col_s1, col_s2 = st.columns([4, 1])
-    with col_s1:
-        search_query = st.text_input("🔍 Search by Student Name, Roll Number, or Card UID:", "", placeholder="Type name, roll, or card UID...", label_visibility="collapsed")
-    with col_s2:
-        if st.button("🔄 Refresh Records", use_container_width=True):
-            st.rerun()
+    # Search box
+    search_query = st.text_input("🔍 Search by Student Name, Roll Number, or Card UID:", "", placeholder="Type name, roll, or card UID...", key="attendance_search_input")
     
     # Attendance events table
     events = get_attendance_events(limit=150, search=search_query)
@@ -583,7 +571,11 @@ with tab_attendance:
         df_display.columns = ["ID", "Timestamp", "Student Name", "Roll Number", "Card UID", "Event"]
         st.dataframe(df_display, use_container_width=True, hide_index=True)
     else:
-        st.info("No attendance events matching search criteria found.")
+        st.info("No attendance events found.")
+
+with tab_attendance:
+    render_attendance_fragment()
+
 
 # ==============================================================================
 # TAB 4: HARDWARE ALERTS
@@ -593,97 +585,92 @@ with tab_limits:
     st.markdown("Configure max capacity per queue. When occupancy exceeds these limits, the Arduino buzzer triggers.")
 
     current_limits = get_queue_alert_limits()
-    # The three canonical monitored queues
     all_queue_names = ["student", "faculty", "scholar"]
 
     with st.form("alert_limits_form"):
         updated_values = {}
         for q_name in all_queue_names:
-            existing_limit = current_limits.get(q_name, {}).get("limit_people", 3)
-            val = st.number_input(f"Max capacity for '{q_name}' queue:", min_value=1, max_value=100, value=int(existing_limit), step=1)
-            updated_values[q_name] = val
-        
-        submitted = st.form_submit_button("💾 Save Alert Limits to Database", type="primary")
-        if submitted:
-            for q_name, new_val in updated_values.items():
-                save_queue_alert_limit(q_name, new_val)
-            st.success("✅ Queue limits saved successfully to database!")
-            time.sleep(1)
+            existing = current_limits.get(q_name, {})
+            current_val = existing.get("limit_people", 3)
+            updated_values[q_name] = st.number_input(
+                f"Max capacity for '{q_name}' queue",
+                min_value=1,
+                max_value=100,
+                value=int(current_val),
+                step=1
+            )
+        submit_limits = st.form_submit_button("💾 Save Alert Limits", use_container_width=True)
+        if submit_limits:
+            for q_name, val in updated_values.items():
+                save_queue_alert_limit(q_name, val)
+            st.success("Queue alert limits saved successfully!")
+            time.sleep(0.5)
             st.rerun()
+
+    st.markdown("---")
+    st.markdown("#### Physical Hardware Setup Guide")
+    st.markdown("""
+    - **Arduino Pin 2**: Connect Active Buzzer (+)
+    - **Arduino Pin 3**: Connect Status LED (+)
+    - **Arduino Pin 10, 9, 11, 12, 13**: Connect RC522 RFID Reader
+    - **I2C SDA/SCL**: Connect 16x2 LCD Display (0x27)
+    """)
+
 
 # ==============================================================================
 # TAB 5: ANALYTICS & HISTORY
 # ==============================================================================
 with tab_history:
-    st.markdown("### 📈 Historical Queue Analytics")
+    st.markdown("### 📈 Persistent Historical Queue Analytics")
     
-    time_filter = st.selectbox("Select Time Range:", [
-        ("Last 1 Hour", 1),
-        ("Last 6 Hours", 6),
-        ("Last 24 Hours", 24),
-        ("Last 7 Days (168 Hours)", 168)
-    ], format_func=lambda x: x[0])
-    
-    hours_selected = time_filter[1]
-    history_records = get_queue_history(hours=hours_selected, limit=1000)
-    history_summary = get_queue_history_summary(hours=hours_selected)
-    
-    if history_summary:
-        st.markdown("#### Queue Occupancy Summary")
-        df_sum = pd.DataFrame.from_dict(history_summary, orient="index").reset_index()
-        df_sum.columns = ["Queue Name", "Peak Occupancy", "Average Occupancy", "Total Samples"]
-        st.dataframe(df_sum, use_container_width=True, hide_index=True)
+    col_f1, col_f2 = st.columns([1, 1])
+    with col_f1:
+        hours_filter = st.selectbox("Time Window", [24, 72, 168, 720], format_func=lambda h: f"Last {h} hours ({round(h/24)} days)")
+    with col_f2:
+        queue_filter = st.selectbox("Filter by Queue", ["All Queues", "student", "faculty", "scholar"])
 
-    if history_records:
-        st.markdown("#### Occupancy Trends Over Time")
-        df_hist = pd.DataFrame(history_records)
-        df_hist["recorded_at"] = pd.to_datetime(df_hist["recorded_at"])
-        
-        chart_data = df_hist.pivot_table(index="recorded_at", columns="queue_name", values="occupancy", aggfunc="mean").ffill().fillna(0)
-        st.line_chart(chart_data, use_container_width=True)
+    q_name_arg = None if queue_filter == "All Queues" else queue_filter
+    hist_records = get_queue_history(queue_name=q_name_arg, hours=hours_filter, limit=500)
+    summary_data = get_queue_history_summary(hours=hours_filter)
+
+    if summary_data:
+        st.markdown("#### Period Peak & Average Occupancies")
+        sum_cols = st.columns(len(summary_data))
+        for idx, (qn, s) in enumerate(summary_data.items()):
+            with sum_cols[idx]:
+                st.markdown(f"""
+                <div class="metric-box">
+                    <div class="metric-label">{qn}</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: #38bdf8;">Peak: {s['peak_occupancy']}</div>
+                    <small style="color: #94a3b8;">Average: {s['average_occupancy']} people</small>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if hist_records:
+        df_hist = pd.DataFrame(hist_records)
+        st.markdown("#### Historical Occupancy Over Time")
+        chart_data = df_hist.pivot_table(index="recorded_at", columns="queue_name", values="occupancy", aggfunc="mean").fillna(0)
+        st.line_chart(chart_data)
+        st.markdown("#### Raw Historical Snapshots")
+        st.dataframe(df_hist[["recorded_at", "video_name", "queue_name", "occupancy", "total_entries", "total_exits", "session_id"]], use_container_width=True, hide_index=True)
     else:
-        st.info(f"No historical records found for the past {hours_selected} hours.")
+        st.info("No historical snapshots found in this time range.")
+
 
 # ==============================================================================
-# TAB 6: SUPABASE CLOUD DATABASE SETTINGS
+# TAB 6: SUPABASE CLOUD SETTINGS
 # ==============================================================================
 with tab_supabase:
-    st.markdown("### ☁️ Supabase Cloud Database Configuration")
-    db_status = get_db_info()
+    st.markdown("### ☁️ Supabase Cloud PostgreSQL Settings")
     
-    if db_status["is_cloud"]:
-        st.success(f" Connected to Supabase Cloud PostgreSQL: `{db_status['target']}`")
-    else:
-        st.warning(" Currently using Local SQLite (`queuesense.db`).")
-        secret_keys = []
-        try:
-            if hasattr(st, "secrets"):
-                secret_keys = list(st.secrets.keys())
-        except Exception:
-            secret_keys = []
-
-        if db_status.get("error"):
-            st.error(f"❌ Supabase Connection Failed: {db_status['error']}")
-            if "password authentication failed" in str(db_status['error']).lower():
-                st.warning("🔑 **Password Authentication Failed!** The password in `DATABASE_URL` is incorrect. Please reset your database password in Supabase: **Project Settings** -> **Database** -> **Reset database password**, then update your Streamlit Secrets.")
-        elif secret_keys:
-            st.info(f"Detected secrets keys in Streamlit: `{secret_keys}`")
-            if "DATABASE_URL" in secret_keys:
-                try:
-                    val = str(st.secrets["DATABASE_URL"]).strip()
-                    if "[" in val or "]" in val:
-                        st.error("⚠️ Detected square brackets `[` or `]` in your password! Please edit Secrets and remove the brackets.")
-                    elif not val.startswith(("postgres://", "postgresql://")):
-                        st.error(f"⚠️ DATABASE_URL must start with `postgresql://` (current value starts with `{val[:12]}...`)")
-                    else:
-                        st.info("DATABASE_URL found. Testing connection...")
-                except Exception:
-                    pass
-            else:
-                st.error("⚠️ `DATABASE_URL` key not found in secrets. Please make sure the key name is exactly `DATABASE_URL = \"...\"`.")
-        else:
-            st.info("ℹ️ No secrets detected yet. Go to App Settings -> Secrets to add your `DATABASE_URL`.")
-
+    db_info = get_db_info()
+    st.markdown(f"**Current Engine:** `{db_info['engine']}`")
+    st.markdown(f"**Target Host:** `{db_info['target']}`")
+    st.markdown(f"**Cloud Status:** `{'Connected (Active)' if db_info['is_cloud'] else 'Local Fallback'}`")
+    
+    if db_info.get("error"):
+        st.error(f"❌ Connection Error: {db_info['error']}")
 
     st.markdown("""
     #### 🚀 How to Connect Supabase Cloud PostgreSQL to Streamlit:
@@ -712,7 +699,6 @@ with tab_supabase:
        ```
     """)
     
-    # Test connection button
     if st.button("🧪 Test Current Database Connection"):
         try:
             stats = get_queue_statistics()
@@ -720,8 +706,3 @@ with tab_supabase:
             st.success(f" Database connection verified! Found {len(stats)} active queues and {summary['total_events']} attendance records.")
         except Exception as err:
             st.error(f"❌ Connection failed: {err}")
-
-# Auto-refresh loop
-if auto_refresh:
-    time.sleep(refresh_rate)
-    st.rerun()

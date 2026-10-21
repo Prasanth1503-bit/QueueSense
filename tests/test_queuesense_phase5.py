@@ -71,6 +71,8 @@ tf = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 TEST_DB = tf.name
 tf.close()
 orig_db = database.DATABASE_PATH
+orig_is_pg = database.is_postgres
+database.is_postgres = lambda: False
 database.DATABASE_PATH = Path(TEST_DB)
 database.initialize_database()
 database.initialize_integration_tables()
@@ -216,6 +218,7 @@ record("arduino/status returns arduino_ready flag", "arduino_ready" in ard_data)
 
 # Clean up temporary DB
 database.DATABASE_PATH = orig_db
+database.is_postgres = orig_is_pg
 try:
     os.unlink(TEST_DB)
 except Exception:

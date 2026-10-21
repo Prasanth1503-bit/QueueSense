@@ -206,35 +206,45 @@ def arduino_status():
     return jsonify(st)
 
 
+def create_standby_frame():
+    try:
+        import cv2
+        import numpy as np
+        img = np.zeros((480, 854, 3), dtype=np.uint8)
+        img[:] = (23, 15, 11)
+        cv2.rectangle(img, (12, 12), (842, 468), (45, 35, 25), 1)
+        cv2.putText(img, "QueueSense AI Monitor", (240, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 230, 255), 2)
+        cv2.putText(img, "Waiting for video frames - Start monitor.py", (200, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (140, 160, 180), 1)
+        ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+        if ok:
+            return buf.tobytes()
+    except Exception:
+        pass
+    return b""
+
+
 def generate_video_stream():
     last_mtime = None
     last_cloud_ts = None
-    # Yield initial frame immediately upon client connection if it exists
-    if LIVE_FRAME_PATH.exists():
-        try:
-            with open(LIVE_FRAME_PATH, "rb") as f:
-                initial_frame = f.read()
-            if len(initial_frame) > 4 and initial_frame.startswith(b"\xff\xd8"):
-                last_mtime = LIVE_FRAME_PATH.stat().st_mtime_ns
-                yield (
-                    b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: " + str(len(initial_frame)).encode() + b"\r\n"
-                    b"Cache-Control: no-cache\r\n\r\n"
-                    + initial_frame + b"\r\n"
-                )
-        except Exception:
-            pass
+    standby_bytes = create_standby_frame()
+    has_sent_standby = False
 
     while True:
         try:
             if LIVE_FRAME_PATH.exists():
-                mtime = LIVE_FRAME_PATH.stat().st_mtime_ns
-                if mtime != last_mtime:
-                    with open(LIVE_FRAME_PATH, "rb") as f:
-                        frame = f.read()
-                    if len(frame) > 4 and frame.startswith(b"\xff\xd8"):
+                try:
+                    mtime = LIVE_FRAME_PATH.stat().st_mtime_ns
+                except (FileNotFoundError, PermissionError):
+                    mtime = None
+                if mtime is not None and mtime != last_mtime:
+                    try:
+                        with open(LIVE_FRAME_PATH, "rb") as f:
+                            frame = f.read()
+                    except (FileNotFoundError, PermissionError, OSError):
+                        frame = None
+                    if frame and len(frame) > 4 and frame.startswith(b"\xff\xd8"):
                         last_mtime = mtime
+                        has_sent_standby = False
                         yield (
                             b"--frame\r\n"
                             b"Content-Type: image/jpeg\r\n"
@@ -247,6 +257,7 @@ def generate_video_stream():
                 c_frame, c_ts = get_live_frame()
                 if c_frame and c_ts != last_cloud_ts:
                     last_cloud_ts = c_ts
+                    has_sent_standby = False
                     yield (
                         b"--frame\r\n"
                         b"Content-Type: image/jpeg\r\n"
@@ -254,11 +265,18 @@ def generate_video_stream():
                         b"Cache-Control: no-cache\r\n\r\n"
                         + c_frame + b"\r\n"
                     )
-                time.sleep(0.5)
-        except (FileNotFoundError, PermissionError, OSError):
-            pass
-        except Exception as e:
-            print("Video stream error:", e)
+                elif not has_sent_standby and standby_bytes:
+                    has_sent_standby = True
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(standby_bytes)).encode() + b"\r\n"
+                        b"Cache-Control: no-cache\r\n\r\n"
+                        + standby_bytes + b"\r\n"
+                    )
+                time.sleep(0.4)
+        except Exception:
+            time.sleep(0.05)
         time.sleep(0.03)
 
 
@@ -303,7 +321,14 @@ def api_live_frame():
                 )
     except Exception:
         pass
-    return ("", 204)
+    return Response(
+        create_standby_frame(),
+        mimetype="image/jpeg",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache"
+        }
+    )
 
 
 @app.route("/health")

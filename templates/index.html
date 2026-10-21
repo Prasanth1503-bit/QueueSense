@@ -93,11 +93,6 @@
           </div>
           <div class="video-frame">
             <img id="live-video-stream" src="{{ url_for('video_feed') }}" alt="Live YOLO queue monitoring feed" class="live-video">
-            <div class="video-placeholder" id="video-placeholder">
-              <div class="placeholder-icon">◉</div>
-              <strong>Waiting for video frames</strong>
-              <p>Start <code>monitor.py</code> to display the annotated camera or video feed.</p>
-            </div>
           </div>
           <div class="video-footer">
             <span><i class="legend-box detection"></i> Person detection</span>
@@ -444,18 +439,6 @@
         setStatus(false);
         console.error("QueueSense dashboard update failed:", error);
       }
-
-      const liveImage = document.getElementById("live-video-stream");
-      const placeholder = document.getElementById("video-placeholder");
-      if (liveImage && placeholder) {
-        if (isMonitoring || (liveImage.naturalWidth && liveImage.naturalWidth > 0)) {
-          placeholder.classList.add("hidden");
-          placeholder.style.display = "none";
-        } else {
-          placeholder.classList.remove("hidden");
-          placeholder.style.display = "flex";
-        }
-      }
     }
 
     function updateClock() {
@@ -704,11 +687,11 @@
     updateDashboard();
     updateClock();
 
-    // Auto-refresh timers
+    // Auto-refresh timers: Real-time 1s attendance and queue metrics
     setInterval(updateDashboard, 1000);
     setInterval(updateClock, 1000);
-    setInterval(loadAttendance, 5000);
-    setInterval(refreshArduinoStatus, 3000);
+    setInterval(loadAttendance, 1000);
+    setInterval(refreshArduinoStatus, 1500);
     setInterval(refreshHistoryFilters, 30000);
   </script>
 </body>

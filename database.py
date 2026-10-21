@@ -10,25 +10,28 @@ except ImportError:
     psycopg2 = None
     RealDictCursor = None
 
-# Supabase / PostgreSQL configuration
-POSTGRES_URL = (
-    os.getenv("DATABASE_URL")
-    or os.getenv("SUPABASE_DB_URL")
-    or os.getenv("POSTGRES_URL")
-    or ""
-).strip()
+def get_postgres_url():
+    """Dynamically resolve the PostgreSQL / Supabase URL from env or Streamlit secrets."""
+    url = (
+        os.getenv("DATABASE_URL")
+        or os.getenv("SUPABASE_DB_URL")
+        or os.getenv("POSTGRES_URL")
+        or ""
+    ).strip()
+    if not url:
+        try:
+            import streamlit as _st
+            if hasattr(_st, "secrets"):
+                url = str(
+                    _st.secrets.get("DATABASE_URL")
+                    or _st.secrets.get("SUPABASE_DB_URL")
+                    or _st.secrets.get("POSTGRES_URL")
+                    or ""
+                ).strip()
+        except Exception:
+            pass
+    return url
 
-try:
-    import streamlit as _st
-    if not POSTGRES_URL and hasattr(_st, "secrets"):
-        POSTGRES_URL = (
-            _st.secrets.get("DATABASE_URL")
-            or _st.secrets.get("SUPABASE_DB_URL")
-            or _st.secrets.get("POSTGRES_URL")
-            or ""
-        ).strip()
-except Exception:
-    pass
 
 _custom_db = os.getenv("QUEUESENSE_DB_PATH") or os.getenv("DATABASE_PATH")
 DATABASE_PATH = Path(_custom_db) if _custom_db else (Path(__file__).resolve().parent / "queuesense.db")
@@ -36,12 +39,14 @@ DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def is_postgres():
-    return bool(psycopg2 and POSTGRES_URL and POSTGRES_URL.startswith(("postgres://", "postgresql://")))
+    url = get_postgres_url()
+    return bool(psycopg2 and url and url.startswith(("postgres://", "postgresql://")))
 
 
 def get_db_info():
     if is_postgres():
-        target = POSTGRES_URL.split("@")[-1] if "@" in POSTGRES_URL else "Supabase"
+        url = get_postgres_url()
+        target = url.split("@")[-1] if "@" in url else "Supabase"
         return {"engine": "PostgreSQL (Supabase Cloud)", "target": target, "is_cloud": True}
     return {"engine": "SQLite (Local File)", "target": str(DATABASE_PATH.name), "is_cloud": False}
 
@@ -113,7 +118,7 @@ class DBConnectionContext:
 
 def get_connection():
     if is_postgres():
-        conn = psycopg2.connect(POSTGRES_URL)
+        conn = psycopg2.connect(get_postgres_url())
         return DBConnectionContext(conn, is_pg=True)
     else:
         conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)

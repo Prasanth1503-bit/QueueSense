@@ -508,7 +508,21 @@ with tab_supabase:
     if db_status["is_cloud"]:
         st.success(f" Connected to Supabase Cloud PostgreSQL: `{db_status['target']}`")
     else:
-        st.warning(" Currently using Local SQLite (`queuesense.db`). Follow the steps below to link Supabase Cloud PostgreSQL.")
+        st.warning(" Currently using Local SQLite (`queuesense.db`).")
+        if hasattr(st, "secrets") and len(st.secrets) > 0:
+            st.info(f"Detected secrets keys in Streamlit: `{list(st.secrets.keys())}`")
+            if "DATABASE_URL" in st.secrets:
+                val = str(st.secrets["DATABASE_URL"]).strip()
+                if "[" in val or "]" in val:
+                    st.error("⚠️ Detected square brackets `[` or `]` in your password! Please edit Secrets and remove the brackets.")
+                elif not val.startswith(("postgres://", "postgresql://")):
+                    st.error(f"⚠️ DATABASE_URL must start with `postgresql://` (current value starts with `{val[:12]}...`)")
+                else:
+                    st.info("DATABASE_URL found. Testing connection...")
+            else:
+                st.error("⚠️ `DATABASE_URL` key not found in secrets. Please make sure the key name is exactly `DATABASE_URL = \"...\"`.")
+        else:
+            st.info("ℹ️ No secrets detected yet. Go to App Settings -> Secrets to add your `DATABASE_URL`.")
 
     st.markdown("""
     #### 🚀 How to Connect Supabase Cloud PostgreSQL to Streamlit:

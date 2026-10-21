@@ -21,21 +21,25 @@ def get_postgres_url():
     if not url:
         try:
             import streamlit as _st
-            if hasattr(_st, "secrets"):
-                url = str(
-                    _st.secrets.get("DATABASE_URL")
-                    or _st.secrets.get("SUPABASE_DB_URL")
-                    or _st.secrets.get("POSTGRES_URL")
-                    or ""
-                ).strip()
+            try:
+                if "DATABASE_URL" in _st.secrets:
+                    url = str(_st.secrets["DATABASE_URL"]).strip()
+                elif "SUPABASE_DB_URL" in _st.secrets:
+                    url = str(_st.secrets["SUPABASE_DB_URL"]).strip()
+            except Exception:
+                pass
         except Exception:
             pass
     return url
 
 
+
 _custom_db = os.getenv("QUEUESENSE_DB_PATH") or os.getenv("DATABASE_PATH")
 DATABASE_PATH = Path(_custom_db) if _custom_db else (Path(__file__).resolve().parent / "queuesense.db")
 DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+
+_last_pg_error = None
 
 
 def is_postgres():
@@ -44,11 +48,20 @@ def is_postgres():
 
 
 def get_db_info():
+    global _last_pg_error
     if is_postgres():
+        if _last_pg_error:
+            return {
+                "engine": "PostgreSQL (Connection Error)",
+                "target": "Supabase Cloud",
+                "is_cloud": False,
+                "error": _last_pg_error
+            }
         url = get_postgres_url()
         target = url.split("@")[-1] if "@" in url else "Supabase"
-        return {"engine": "PostgreSQL (Supabase Cloud)", "target": target, "is_cloud": True}
-    return {"engine": "SQLite (Local File)", "target": str(DATABASE_PATH.name), "is_cloud": False}
+        return {"engine": "PostgreSQL (Supabase Cloud)", "target": target, "is_cloud": True, "error": None}
+    return {"engine": "SQLite (Local File)", "target": str(DATABASE_PATH.name), "is_cloud": False, "error": None}
+
 
 
 class PostgresCursorWrapper:
@@ -117,13 +130,23 @@ class DBConnectionContext:
 
 
 def get_connection():
+    global _last_pg_error
     if is_postgres():
-        conn = psycopg2.connect(get_postgres_url())
-        return DBConnectionContext(conn, is_pg=True)
+        try:
+            conn = psycopg2.connect(get_postgres_url())
+            _last_pg_error = None
+            return DBConnectionContext(conn, is_pg=True)
+        except Exception as exc:
+            _last_pg_error = str(exc)
+            # Safe fallback to local SQLite so the system never crashes
+            conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
+            conn.row_factory = sqlite3.Row
+            return DBConnectionContext(conn, is_pg=False)
     else:
         conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
         conn.row_factory = sqlite3.Row
         return DBConnectionContext(conn, is_pg=False)
+
 
 
 def current_timestamp():
@@ -342,7 +365,10 @@ def reset_queue_status():
         connection.execute("DELETE FROM queue_status")
 
 
-initialize_database()
+try:
+    initialize_database()
+except Exception as _e:
+    _last_pg_error = str(_e)
 
 
 # ===== Arduino/RFID integration tables and functions =====
@@ -465,4 +491,7 @@ def save_queue_alert_limit(queue_name, limit_people):
     return {"queue_name": name, "limit_people": limit_value, "updated_at": stamp}
 
 
-initialize_integration_tables()
+try:
+    initialize_integration_tables()
+except Exception as _e:
+    _last_pg_error = str(_e)

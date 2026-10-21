@@ -171,12 +171,16 @@ SERVICE_SECONDS_PER_PERSON = int(os.getenv("SERVICE_SECONDS_PER_PERSON", 25))
 with st.sidebar:
     st.markdown("### ⚡ QueueSense System")
     db_info = get_db_info()
-    if db_info["is_cloud"]:
+    if db_info.get("is_cloud"):
         st.markdown(f'<div class="db-pill-cloud">☁️ Supabase Cloud DB Connected</div>', unsafe_allow_html=True)
         st.caption(f"Target: `{db_info['target']}`")
+    elif db_info.get("error"):
+        st.markdown(f'<div class="db-pill-local" style="border-color: #ef4444; color: #f87171;">⚠️ Cloud Auth Error</div>', unsafe_allow_html=True)
+        st.caption("Password auth failed. Check Tab '☁️ Supabase Cloud Settings'.")
     else:
         st.markdown(f'<div class="db-pill-local">📁 Local SQLite Database</div>', unsafe_allow_html=True)
         st.caption("Add `DATABASE_URL` in secrets to switch to Supabase PostgreSQL.")
+
 
     st.markdown("---")
     
@@ -509,20 +513,35 @@ with tab_supabase:
         st.success(f" Connected to Supabase Cloud PostgreSQL: `{db_status['target']}`")
     else:
         st.warning(" Currently using Local SQLite (`queuesense.db`).")
-        if hasattr(st, "secrets") and len(st.secrets) > 0:
-            st.info(f"Detected secrets keys in Streamlit: `{list(st.secrets.keys())}`")
-            if "DATABASE_URL" in st.secrets:
-                val = str(st.secrets["DATABASE_URL"]).strip()
-                if "[" in val or "]" in val:
-                    st.error("⚠️ Detected square brackets `[` or `]` in your password! Please edit Secrets and remove the brackets.")
-                elif not val.startswith(("postgres://", "postgresql://")):
-                    st.error(f"⚠️ DATABASE_URL must start with `postgresql://` (current value starts with `{val[:12]}...`)")
-                else:
-                    st.info("DATABASE_URL found. Testing connection...")
+        secret_keys = []
+        try:
+            if hasattr(st, "secrets"):
+                secret_keys = list(st.secrets.keys())
+        except Exception:
+            secret_keys = []
+
+        if db_status.get("error"):
+            st.error(f"❌ Supabase Connection Failed: {db_status['error']}")
+            if "password authentication failed" in str(db_status['error']).lower():
+                st.warning("🔑 **Password Authentication Failed!** The password in `DATABASE_URL` is incorrect. Please reset your database password in Supabase: **Project Settings** -> **Database** -> **Reset database password**, then update your Streamlit Secrets.")
+        elif secret_keys:
+            st.info(f"Detected secrets keys in Streamlit: `{secret_keys}`")
+            if "DATABASE_URL" in secret_keys:
+                try:
+                    val = str(st.secrets["DATABASE_URL"]).strip()
+                    if "[" in val or "]" in val:
+                        st.error("⚠️ Detected square brackets `[` or `]` in your password! Please edit Secrets and remove the brackets.")
+                    elif not val.startswith(("postgres://", "postgresql://")):
+                        st.error(f"⚠️ DATABASE_URL must start with `postgresql://` (current value starts with `{val[:12]}...`)")
+                    else:
+                        st.info("DATABASE_URL found. Testing connection...")
+                except Exception:
+                    pass
             else:
                 st.error("⚠️ `DATABASE_URL` key not found in secrets. Please make sure the key name is exactly `DATABASE_URL = \"...\"`.")
         else:
             st.info("ℹ️ No secrets detected yet. Go to App Settings -> Secrets to add your `DATABASE_URL`.")
+
 
     st.markdown("""
     #### 🚀 How to Connect Supabase Cloud PostgreSQL to Streamlit:

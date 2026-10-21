@@ -439,6 +439,9 @@
         if (data.arduino) {
           updateArduinoBadge(data.arduino);
         }
+        if (data.alert_limits) {
+          syncAlertLimitInputs(data.alert_limits);
+        }
       } catch (error) {
         setStatus(false);
         console.error("QueueSense dashboard update failed:", error);
@@ -602,37 +605,69 @@
     // ==========================================
     // HARDWARE ALERTS & RFID FUNCTIONS
     // ==========================================
-    async function loadAlertLimits() {
+    function bindLimitFormEvents(box) {
+      box.querySelectorAll("form.limit-form").forEach(form => form.addEventListener("submit", async event => {
+        event.preventDefault(); const message = document.getElementById("limit-message");
+        const value = Number(form.elements.limit_people.value);
+        try {
+          const response = await fetch("/api/alert-limits", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ queue_name: form.dataset.queue, limit_people: value })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Save failed");
+          message.textContent = `Saved ${form.dataset.queue}: ${value} people.`;
+          message.className = "integration-message success";
+          updateDashboard();
+        } catch (error) {
+          message.textContent = error.message;
+          message.className = "integration-message error";
+        }
+      }));
+    }
+
+    function syncAlertLimitInputs(limits) {
+      if (!limits) return;
       const box = document.getElementById("limit-controls");
+      if (!box) return;
+      const forms = box.querySelectorAll("form.limit-form");
+      const names = Object.keys(limits);
+
+      if (!forms.length) {
+        if (!names.length) {
+          box.innerHTML = "<p>No queue limits configured yet. Limits will appear after queues are saved.</p>";
+          return;
+        }
+        box.innerHTML = names.map(name => `<form class="limit-form" data-queue="${escapeHtml(name)}"><label>${escapeHtml(name)}<span>Alert buzzer when occupancy exceeds</span></label><input name="limit_people" type="number" min="0" max="10000" required value="${Number(limits[name].limit_people) || 0}"><span>people</span><button type="submit">Save</button></form>`).join("");
+        bindLimitFormEvents(box);
+        return;
+      }
+
+      forms.forEach(form => {
+        const queueName = form.dataset.queue;
+        const input = form.elements.limit_people;
+        if (input && document.activeElement !== input) {
+          const limitInfo = limits[queueName] || limits[queueName.toLowerCase()];
+          if (limitInfo && limitInfo.limit_people !== undefined) {
+            const num = Number(limitInfo.limit_people);
+            if (Number(input.value) !== num) {
+              input.value = num;
+            }
+          }
+        }
+      });
+    }
+
+    async function loadAlertLimits() {
       try {
         const response = await fetch("/api/alert-limits", { cache: "no-store" });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.error || "Unable to load limits");
-        const limits = data.limits || {};
-        const names = Object.keys(limits);
-        if (!names.length) { box.innerHTML = "<p>No queue limits configured yet. Limits will appear after queues are saved.</p>"; return; }
-        box.innerHTML = names.map(name => `<form class="limit-form" data-queue="${escapeHtml(name)}"><label>${escapeHtml(name)}<span>Alert buzzer when occupancy exceeds</span></label><input name="limit_people" type="number" min="0" max="10000" required value="${Number(limits[name].limit_people) || 0}"><span>people</span><button type="submit">Save</button></form>`).join("");
-        box.querySelectorAll("form").forEach(form => form.addEventListener("submit", async event => {
-          event.preventDefault(); const message = document.getElementById("limit-message");
-          const value = Number(form.elements.limit_people.value);
-          try {
-            const response = await fetch("/api/alert-limits", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ queue_name: form.dataset.queue, limit_people: value })
-            });
-            const result = await response.json();
-            if (!response.ok) throw new Error(result.error || "Save failed");
-            message.textContent = `Saved ${form.dataset.queue}: ${value} people.`;
-            message.className = "integration-message success";
-            updateDashboard();
-          } catch (error) {
-            message.textContent = error.message;
-            message.className = "integration-message error";
-          }
-        }));
+        if (response.ok && data.limits) {
+          syncAlertLimitInputs(data.limits);
+        }
       } catch (error) {
-        box.innerHTML = `<p class="integration-error">${escapeHtml(error.message)}</p>`;
+        // Handled silently
       }
     }
 

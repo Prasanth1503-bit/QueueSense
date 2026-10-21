@@ -24,7 +24,8 @@ from database import (
     is_postgres,
     get_live_frame,
     get_hardware_status,
-    save_attendance_event
+    save_attendance_event,
+    normalize_queue_name
 )
 
 # Optional hardware bridge import (if running on a machine with serial)
@@ -284,7 +285,7 @@ tab_overview, tab_video, tab_attendance, tab_limits, tab_history, tab_supabase =
 # ==============================================================================
 @st.fragment(run_every=1.0)
 def render_overview_fragment():
-    queues = get_queue_statistics(max_age_seconds=15)
+    queues = get_queue_statistics(max_age_seconds=5)
     limits = get_queue_alert_limits()
     attendance_summary = get_attendance_summary()
 
@@ -299,10 +300,11 @@ def render_overview_fragment():
         occ = max(0, int(stats.get("occupancy", 0) or 0))
         wait = occ * SERVICE_SECONDS_PER_PERSON
         stats["estimated_wait_seconds"] = wait
-        
+
         clean = str(name).strip().lower()
-        limit_info = limits.get(name) or lower_limits.get(clean)
-        limit_val = int(limit_info.get("limit_people", 5)) if limit_info else 5
+        norm = normalize_queue_name(name)
+        limit_info = limits.get(name) or limits.get(norm) or lower_limits.get(clean) or lower_limits.get(norm)
+        limit_val = int(limit_info.get("limit_people", 3)) if limit_info else 3
         stats["alert_limit"] = limit_val
         stats["alert_active"] = occ > limit_val
         
@@ -812,32 +814,54 @@ with tab_attendance:
 # ==============================================================================
 # TAB 4: HARDWARE ALERTS
 # ==============================================================================
-with tab_limits:
-    st.markdown("### 🔔 Hardware Buzzer & Queue Limits")
-    st.markdown("Configure max capacity per queue. When occupancy exceeds these limits, the Arduino buzzer triggers.")
-
+@st.fragment(run_every=2.0)
+def render_limits_fragment():
     current_limits = get_queue_alert_limits()
     all_queue_names = ["student", "faculty", "scholar"]
 
+    # Active synchronized limit indicators
+    l_cols = st.columns(3)
+    for idx, q_name in enumerate(all_queue_names):
+        existing = current_limits.get(q_name, {})
+        val = existing.get("limit_people", 3)
+        with l_cols[idx]:
+            st.markdown(f"""
+            <div style="background: rgba(15,23,42,0.6); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 14px; text-align: center;">
+                <div style="font-size: 0.85rem; color: #94a3b8; text-transform: uppercase; font-weight: 700;">{q_name.upper()}</div>
+                <div style="font-size: 2.2rem; font-weight: 800; color: #38bdf8; margin: 4px 0;">{val}</div>
+                <small style="color: #64748b;">Current Active Limit</small>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
     with st.form("alert_limits_form"):
+        st.markdown("##### ⚙️ Update Capacity Thresholds")
         updated_values = {}
-        for q_name in all_queue_names:
+        form_cols = st.columns(3)
+        for idx, q_name in enumerate(all_queue_names):
             existing = current_limits.get(q_name, {})
             current_val = existing.get("limit_people", 3)
-            updated_values[q_name] = st.number_input(
-                f"Max capacity for '{q_name}' queue",
-                min_value=1,
-                max_value=100,
-                value=int(current_val),
-                step=1
-            )
-        submit_limits = st.form_submit_button("💾 Save Alert Limits", use_container_width=True)
+            with form_cols[idx]:
+                updated_values[q_name] = st.number_input(
+                    f"Max capacity: '{q_name}'",
+                    min_value=1,
+                    max_value=100,
+                    value=int(current_val),
+                    step=1,
+                    key=f"limit_input_{q_name}"
+                )
+        submit_limits = st.form_submit_button("💾 Save Alert Limits (Sync to Flask & Hardware)", use_container_width=True)
         if submit_limits:
             for q_name, val in updated_values.items():
                 save_queue_alert_limit(q_name, val)
-            st.success("Queue alert limits saved successfully!")
+            st.success("Queue alert limits saved and synchronized to Flask & Arduino!")
             time.sleep(0.5)
             st.rerun()
+
+with tab_limits:
+    st.markdown("### 🔔 Hardware Buzzer & Queue Limits")
+    st.markdown("Configure max capacity per queue. When occupancy exceeds these limits, the Arduino buzzer triggers.")
+    render_limits_fragment()
 
     st.markdown("---")
     st.markdown("#### Physical Hardware Setup Guide")

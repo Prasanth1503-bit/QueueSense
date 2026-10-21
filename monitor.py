@@ -818,9 +818,9 @@ if not is_live_camera:
 
 queue_manager = QueueManager(
     queue_names=queue_names,
-    confirmation_seconds=2.5,          # Must remain in ROI before counting entry
-    exit_confirmation_seconds=1.5,      # Must remain outside before counting exit
-    lost_track_timeout=5.0               # Tolerate short tracking interruptions
+    confirmation_seconds=1.0,          # Responsive entry confirmation
+    exit_confirmation_seconds=0.6,      # Immediate exit confirmation when stepping outside ROI
+    lost_track_timeout=1.5               # Fast cleanup (1.5s) when walking away from camera
 )
 
 # Clear any lingering queues from previous sessions so only current queues are active

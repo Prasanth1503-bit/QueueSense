@@ -122,6 +122,10 @@ class ArduinoQueueBridge:
             self.alert_active = active
             cmd = "BUZZER,ON" if active else "BUZZER,OFF"
             self._send(cmd)
+            if not active:
+                # Double-send to guarantee delivery and clear any buffered alarm
+                time.sleep(0.015)
+                self._send("BUZZER,OFF")
             print("[Arduino] Sent:", cmd)
             self._sync_cloud_status()
 
@@ -138,26 +142,27 @@ class ArduinoQueueBridge:
             limits = get_queue_alert_limits()
         except Exception as exc:
             self.last_error = str(exc)
-            return
+            limits = {}
 
         lower_limits = {str(k).strip().lower(): v for k, v in limits.items()}
 
         active = False
-        for name, v in statistics.items():
-            occ = int(v.get("occupancy", 0) or 0)
-            clean = str(name).strip().lower()
+        if statistics:
+            for name, v in statistics.items():
+                occ = int(v.get("occupancy", 0) or 0)
+                clean = str(name).strip().lower()
 
-            limit_info = limits.get(name) or lower_limits.get(clean)
-            if not limit_info:
-                for lk, lv in lower_limits.items():
-                    if clean in lk or lk in clean:
-                        limit_info = lv
-                        break
+                limit_info = limits.get(name) or lower_limits.get(clean)
+                if not limit_info:
+                    for lk, lv in lower_limits.items():
+                        if clean in lk or lk in clean:
+                            limit_info = lv
+                            break
 
-            limit_val = int(limit_info.get("limit_people", 5)) if limit_info else 5
-            if occ > limit_val:
-                active = True
-                break
+                limit_val = int(limit_info.get("limit_people", 5)) if limit_info else 5
+                if occ > limit_val:
+                    active = True
+                    break
 
         self.set_buzzer(active)
 
@@ -204,11 +209,17 @@ class ArduinoQueueBridge:
     def _run(self):
         """Background thread: connect, read lines, reconnect on error."""
         last_heartbeat = 0
+        last_silence_guard = 0
         while not self.stop_event.is_set():
             now_t = time.monotonic()
             if now_t - last_heartbeat >= 3.0:
                 last_heartbeat = now_t
                 self._sync_cloud_status()
+
+            # Safety guard: Re-assert BUZZER,OFF every 2.0s when alert is inactive to prevent stuck buzzer
+            if not self.alert_active and self.connected and (now_t - last_silence_guard >= 2.0):
+                last_silence_guard = now_t
+                self._send("BUZZER,OFF")
 
             if not self.serial or not self.serial.is_open:
                 self.connected = False

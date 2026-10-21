@@ -625,13 +625,47 @@ def get_attendance_summary():
     return summary
 
 
+_limits_cache = {"data": None, "ts": 0.0}
+
+
+def normalize_queue_name(name):
+    clean = str(name).strip().lower()
+    for standard in ("student", "faculty", "scholar"):
+        if standard in clean:
+            return standard
+    return clean
+
+
 def get_queue_alert_limits():
+    global _limits_cache
+    now_m = time.monotonic()
+    if now_m - _limits_cache["ts"] < 1.0 and _limits_cache["data"] is not None:
+        return _limits_cache["data"]
+
     with get_connection() as connection:
         rows = connection.execute("SELECT queue_name,limit_people,updated_at FROM queue_alert_limits ORDER BY queue_name").fetchall()
-    return {r["queue_name"]: {"limit_people": r["limit_people"], "updated_at": r["updated_at"]} for r in rows}
+
+    limits = {r["queue_name"]: {"limit_people": r["limit_people"], "updated_at": r["updated_at"]} for r in rows}
+
+    # Ensure canonical default queues are always available
+    for default_name in ("student", "faculty", "scholar"):
+        if default_name not in limits:
+            found = False
+            for k, v in list(limits.items()):
+                if normalize_queue_name(k) == default_name:
+                    limits[default_name] = v
+                    found = True
+                    break
+            if not found:
+                limits[default_name] = {"limit_people": 3, "updated_at": current_timestamp()}
+
+    _limits_cache["data"] = limits
+    _limits_cache["ts"] = now_m
+    return limits
 
 
 def save_queue_alert_limit(queue_name, limit_people):
+    global _limits_cache
     name = str(queue_name).strip()
     limit_value = int(limit_people)
     if not name:
@@ -639,12 +673,40 @@ def save_queue_alert_limit(queue_name, limit_people):
     if limit_value < 0:
         raise ValueError("Limit cannot be negative")
     stamp = current_timestamp()
+    norm_name = normalize_queue_name(name)
+    _limits_cache["ts"] = 0.0  # Invalidate cache
+
     with get_connection() as connection:
         connection.execute(
             """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
             ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
             (name, limit_value, stamp)
         )
+        if norm_name != name:
+            connection.execute(
+                """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
+                ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
+                (norm_name, limit_value, stamp)
+            )
+
+    # Local SQLite backup persistence if using Postgres
+    if is_postgres() and DATABASE_PATH.exists():
+        try:
+            with sqlite3.connect(str(DATABASE_PATH), timeout=5) as lconn:
+                lconn.execute(
+                    """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
+                    ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
+                    (name, limit_value, stamp)
+                )
+                if norm_name != name:
+                    lconn.execute(
+                        """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
+                        ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
+                        (norm_name, limit_value, stamp)
+                    )
+        except Exception:
+            pass
+
     return {"queue_name": name, "limit_people": limit_value, "updated_at": stamp}
 
 

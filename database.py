@@ -71,7 +71,7 @@ def get_pg_pool():
         with _pool_lock:
             if _pg_pool is None:
                 try:
-                    _pg_pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=url)
+                    _pg_pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=url, connect_timeout=3)
                     _last_pg_error = None
                 except Exception as exc:
                     _last_pg_error = str(exc)
@@ -195,7 +195,7 @@ def get_connection():
                 _last_pg_error = str(exc)
         else:
             try:
-                conn = psycopg2.connect(get_postgres_url())
+                conn = psycopg2.connect(get_postgres_url(), connect_timeout=3)
                 _last_pg_error = None
                 return DBConnectionContext(conn, is_pg=True, pool=None)
             except Exception as exc:

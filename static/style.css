@@ -1,12 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
-
 :root {
   --bg:#0b1020;--sidebar:#0d1425;--panel:#121b2e;--border:rgba(155,174,208,0.13);
   --text:#edf3ff;--muted:#8795ad;--cyan:#36d6c5;--green:#58d6a3;--orange:#ffb66d;--purple:#b5a1ff;
 }
 *{box-sizing:border-box;}
 html{scroll-behavior:smooth;}
-body{margin:0;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:14px;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe UI',-apple-system,BlinkMacSystemFont,system-ui,Roboto,Helvetica,Arial,sans-serif;font-size:14px;}
 button,select,input{font:inherit;}
 button{cursor:pointer;}
 a{text-decoration:none;color:inherit;}

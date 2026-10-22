@@ -49,19 +49,31 @@ DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 _last_pg_error = None
 _pg_pool = None
+_pg_offline = False
+_pg_offline_until = 0.0
 import threading
 _pool_lock = threading.Lock()
 
 
 def is_postgres():
-    if os.getenv("USE_SQLITE", "").lower() in ("1", "true", "yes"):
+    global _pg_offline, _pg_offline_until
+    # 1. Check explicit local/offline environment variables
+    if os.getenv("USE_SQLITE", "").lower() in ("1", "true", "yes") or \
+       os.getenv("OFFLINE_MODE", "").lower() in ("1", "true", "yes") or \
+       os.getenv("USE_LOCAL_DB", "").lower() in ("1", "true", "yes"):
         return False
+
+    # 2. Circuit breaker: if previous connection failed (offline in college), bypass immediately (< 0.001ms)
+    now_m = time.monotonic()
+    if _pg_offline and (now_m < _pg_offline_until):
+        return False
+
     url = get_postgres_url()
     return bool(psycopg2 and url and url.startswith(("postgres://", "postgresql://")))
 
 
 def get_pg_pool():
-    global _pg_pool, _last_pg_error
+    global _pg_pool, _last_pg_error, _pg_offline, _pg_offline_until
     if not is_postgres():
         return None
     url = get_postgres_url()
@@ -71,27 +83,31 @@ def get_pg_pool():
         with _pool_lock:
             if _pg_pool is None:
                 try:
-                    _pg_pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=url, connect_timeout=3)
+                    # 1-second connect timeout so offline startup never hangs
+                    _pg_pool = psycopg2.pool.ThreadedConnectionPool(minconn=1, maxconn=10, dsn=url, connect_timeout=1)
                     _last_pg_error = None
+                    _pg_offline = False
                 except Exception as exc:
                     _last_pg_error = str(exc)
+                    _pg_offline = True
+                    _pg_offline_until = time.monotonic() + 120.0
                     return None
     return _pg_pool
 
 
 def get_db_info():
-    global _last_pg_error
-    if is_postgres():
-        if _last_pg_error:
-            return {
-                "engine": "PostgreSQL (Connection Error)",
-                "target": "Supabase Cloud",
-                "is_cloud": False,
-                "error": _last_pg_error
-            }
+    global _last_pg_error, _pg_offline
+    if is_postgres() and not _pg_offline:
         url = get_postgres_url()
         target = url.split("@")[-1] if "@" in url else "Supabase"
         return {"engine": "PostgreSQL (Supabase Cloud)", "target": target, "is_cloud": True, "error": None}
+    if _last_pg_error:
+        return {
+            "engine": "SQLite (Local Offline Mode)",
+            "target": str(DATABASE_PATH.name),
+            "is_cloud": False,
+            "error": "Cloud unreachable (operating in 100% offline local SQLite mode)"
+        }
     return {"engine": "SQLite (Local File)", "target": str(DATABASE_PATH.name), "is_cloud": False, "error": None}
 
 
@@ -177,7 +193,7 @@ class DBConnectionContext:
 
 
 def get_connection():
-    global _last_pg_error
+    global _last_pg_error, _pg_offline, _pg_offline_until
     if is_postgres():
         pool = get_pg_pool()
         if pool is not None:
@@ -193,13 +209,11 @@ def get_connection():
                 return DBConnectionContext(raw_conn, is_pg=True, pool=pool)
             except Exception as exc:
                 _last_pg_error = str(exc)
+                _pg_offline = True
+                _pg_offline_until = time.monotonic() + 120.0
         else:
-            try:
-                conn = psycopg2.connect(get_postgres_url(), connect_timeout=3)
-                _last_pg_error = None
-                return DBConnectionContext(conn, is_pg=True, pool=None)
-            except Exception as exc:
-                _last_pg_error = str(exc)
+            _pg_offline = True
+            _pg_offline_until = time.monotonic() + 120.0
 
     conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
     conn.row_factory = sqlite3.Row

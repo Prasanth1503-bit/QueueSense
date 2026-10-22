@@ -265,9 +265,6 @@
       }[char]));
     }
 
-    let streamActive = false;
-    let streamFailed = false;
-
     function setStatus(isMonitoring) {
       const status = document.getElementById("system-status");
       status.classList.toggle("online", Boolean(isMonitoring));
@@ -278,18 +275,8 @@
       if (badge) badge.classList.toggle("live-badge-active", Boolean(isMonitoring));
 
       const placeholder = document.getElementById("video-placeholder");
-      const img = document.getElementById("live-video-stream");
-
-      if (isMonitoring) {
-        if (placeholder) placeholder.classList.add("hidden");
-        if (img && (!streamActive || streamFailed)) {
-          streamActive = true;
-          streamFailed = false;
-          img.src = "{{ url_for('video_feed') }}?t=" + Date.now();
-        }
-      } else {
-        if (placeholder) placeholder.classList.remove("hidden");
-        streamActive = false;
+      if (placeholder) {
+        placeholder.classList.toggle("hidden", Boolean(isMonitoring));
       }
     }
 
@@ -753,13 +740,8 @@
       liveStreamImg.onerror = () => {
         setTimeout(() => {
           liveStreamImg.src = "{{ url_for('video_feed') }}?t=" + Date.now();
-        }, 1000);
+        }, 2000);
       };
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden) {
-          liveStreamImg.src = "{{ url_for('video_feed') }}?t=" + Date.now();
-        }
-      });
     }
 
     // Initial loads

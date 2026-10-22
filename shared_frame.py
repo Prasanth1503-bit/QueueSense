@@ -96,6 +96,8 @@ def read_live_frame(min_frame_id: int = -1, max_age_seconds: float = 3.0) -> Opt
                 return None
 
             frame_data = bytes(_reader_shm.buf[HEADER_SIZE:HEADER_SIZE + flen])
+            if len(frame_data) < 10 or not frame_data.startswith(b"\xff\xd8") or not frame_data.endswith(b"\xff\xd9"):
+                return None
             return fid, ts, frame_data
         except Exception:
             try:

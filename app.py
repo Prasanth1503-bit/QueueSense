@@ -352,7 +352,7 @@ def generate_video_stream():
     while True:
         try:
             # 1. Ultra-fast shared memory RAM buffer (30 FPS, < 0.01ms, zero lock)
-            shm_res = read_live_frame(min_frame_id=client_last_id, max_age_seconds=2.5)
+            shm_res = read_live_frame(min_frame_id=client_last_id, max_age_seconds=6.0)
             if shm_res is not None:
                 fid, ts, frame_bytes = shm_res
                 client_last_id = fid
@@ -378,7 +378,7 @@ def generate_video_stream():
                         b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n"
                         + fb + b"\r\n"
                     )
-                elif (now - last_yield_time) > 2.5:
+                elif (now - last_yield_time) > 6.0:
                     # Stream standby frame if no feed active
                     yield (
                         b"--frame\r\n"

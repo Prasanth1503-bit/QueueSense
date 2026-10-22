@@ -616,10 +616,24 @@ record("Lost-track timeout triggers exit cleanup", stats3["Q"]["exits"] >= 1)
 # CLEANUP
 # ======================================================================
 database.DATABASE_PATH = orig_db_path
+database.is_postgres = orig_is_pg
 try:
     os.unlink(TEST_DB)
 except Exception:
     pass
+try:
+    with database.get_connection() as conn:
+        conn.execute("DELETE FROM attendance_events WHERE student_name IN ('Alice Smith', 'Bob Jones', 'Eve', 'Mallory')")
+except Exception:
+    pass
+if database.DATABASE_PATH.exists():
+    try:
+        with sqlite3.connect(str(database.DATABASE_PATH)) as lconn:
+            lconn.execute("DELETE FROM attendance_events WHERE student_name IN ('Alice Smith', 'Bob Jones', 'Eve', 'Mallory')")
+            lconn.commit()
+    except Exception:
+        pass
+database.invalidate_attendance_cache()
 
 
 # ======================================================================

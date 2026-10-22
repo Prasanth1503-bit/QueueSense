@@ -553,6 +553,10 @@ def initialize_integration_tables():
             for name, limit_value in (("student", 3), ("faculty", 3), ("scholar", 3)):
                 connection.execute("""INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at)
                     VALUES(?,?,?) ON CONFLICT(queue_name) DO NOTHING""", (name, limit_value, current_timestamp()))
+            try:
+                connection.execute("DELETE FROM queue_alert_limits WHERE LOWER(queue_name) IN ('student queue', 'faculty queue', 'scholar queue')")
+            except Exception:
+                pass
             
             # Auto-sync offline SQLite records into Supabase so no scans are lost
             try:
@@ -592,6 +596,10 @@ def initialize_integration_tables():
             for name, limit_value in (("student", 3), ("faculty", 3), ("scholar", 3)):
                 connection.execute("""INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at)
                     VALUES(?,?,?) ON CONFLICT(queue_name) DO NOTHING""", (name, limit_value, current_timestamp()))
+            try:
+                connection.execute("DELETE FROM queue_alert_limits WHERE LOWER(queue_name) IN ('student queue', 'faculty queue', 'scholar queue')")
+            except Exception:
+                pass
 
 
 _attendance_cache = {
@@ -711,6 +719,47 @@ def normalize_queue_name(name):
     return clean
 
 
+def canonical_queue_name(name):
+    clean = str(name).strip()
+    lower = clean.lower()
+    if "student" in lower:
+        return "student"
+    if "faculty" in lower:
+        return "faculty"
+    if "scholar" in lower:
+        return "scholar"
+    return lower
+
+
+class NormalizedLimitsDict(dict):
+    """Dictionary of queue limits that maps aliases (e.g. 'Student Queue' -> 'student')."""
+    def _find_key(self, key):
+        if dict.__contains__(self, key):
+            return key
+        canon = canonical_queue_name(key)
+        if dict.__contains__(self, canon):
+            return canon
+        for k in dict.keys(self):
+            if canonical_queue_name(k) == canon:
+                return k
+        return None
+
+    def __getitem__(self, key):
+        found = self._find_key(key)
+        if found is not None:
+            return dict.__getitem__(self, found)
+        raise KeyError(key)
+
+    def get(self, key, default=None):
+        found = self._find_key(key)
+        if found is not None:
+            return dict.__getitem__(self, found)
+        return default
+
+    def __contains__(self, key):
+        return self._find_key(key) is not None
+
+
 def get_queue_alert_limits():
     global _limits_cache
     now_m = time.monotonic()
@@ -720,49 +769,60 @@ def get_queue_alert_limits():
     with get_connection() as connection:
         rows = connection.execute("SELECT queue_name,limit_people,updated_at FROM queue_alert_limits ORDER BY queue_name").fetchall()
 
-    limits = {r["queue_name"]: {"limit_people": r["limit_people"], "updated_at": r["updated_at"]} for r in rows}
+    # Deduplicate rows by canonical name so only 'student', 'faculty', 'scholar' appear
+    limits = {}
+    for r in rows:
+        cname = canonical_queue_name(r["queue_name"])
+        if cname not in limits:
+            limits[cname] = {"limit_people": r["limit_people"], "updated_at": r["updated_at"]}
 
-    # Ensure canonical default queues are always available
-    for default_name in ("student", "faculty", "scholar"):
+    # Ensure canonical default queues are always available in exact desired order
+    canonical_order = ["student", "faculty", "scholar"]
+    for default_name in canonical_order:
         if default_name not in limits:
-            found = False
-            for k, v in list(limits.items()):
-                if normalize_queue_name(k) == default_name:
-                    limits[default_name] = v
-                    found = True
-                    break
-            if not found:
-                limits[default_name] = {"limit_people": 3, "updated_at": current_timestamp()}
+            limits[default_name] = {"limit_people": 3, "updated_at": current_timestamp()}
 
-    _limits_cache["data"] = limits
+    ordered_limits = {k: limits[k] for k in canonical_order if k in limits}
+    for k, v in limits.items():
+        if k not in ordered_limits:
+            ordered_limits[k] = v
+
+    result = NormalizedLimitsDict(ordered_limits)
+    _limits_cache["data"] = result
     _limits_cache["ts"] = now_m
-    return limits
+    return result
 
 
 def save_queue_alert_limit(queue_name, limit_people):
     global _limits_cache
-    name = str(queue_name).strip()
+    raw_name = str(queue_name).strip()
     limit_value = int(limit_people)
-    if not name:
+    if not raw_name:
         raise ValueError("Queue name cannot be empty")
     if limit_value < 0:
         raise ValueError("Limit cannot be negative")
     stamp = current_timestamp()
-    norm_name = normalize_queue_name(name)
+    canon_name = canonical_queue_name(raw_name)
     _limits_cache["ts"] = 0.0  # Invalidate cache
 
     with get_connection() as connection:
         connection.execute(
             """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
             ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
-            (name, limit_value, stamp)
+            (canon_name, limit_value, stamp)
         )
-        if norm_name != name:
-            connection.execute(
-                """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
-                ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
-                (norm_name, limit_value, stamp)
-            )
+        # Purge any legacy 'Student Queue' row so only the canonical name exists
+        if raw_name != canon_name:
+            try:
+                connection.execute("DELETE FROM queue_alert_limits WHERE queue_name = ?", (raw_name,))
+            except Exception:
+                pass
+        for variant in (f"{canon_name} queue", f"{canon_name.title()} Queue", f"{canon_name.capitalize()} Queue"):
+            if variant != canon_name:
+                try:
+                    connection.execute("DELETE FROM queue_alert_limits WHERE LOWER(queue_name) = LOWER(?)", (variant,))
+                except Exception:
+                    pass
 
     # Local SQLite backup persistence if using Postgres
     if is_postgres() and DATABASE_PATH.exists():
@@ -771,18 +831,18 @@ def save_queue_alert_limit(queue_name, limit_people):
                 lconn.execute(
                     """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
                     ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
-                    (name, limit_value, stamp)
+                    (canon_name, limit_value, stamp)
                 )
-                if norm_name != name:
-                    lconn.execute(
-                        """INSERT INTO queue_alert_limits(queue_name,limit_people,updated_at) VALUES(?,?,?)
-                        ON CONFLICT(queue_name) DO UPDATE SET limit_people=excluded.limit_people,updated_at=excluded.updated_at""",
-                        (norm_name, limit_value, stamp)
-                    )
+                if raw_name != canon_name:
+                    lconn.execute("DELETE FROM queue_alert_limits WHERE queue_name = ?", (raw_name,))
+                for variant in (f"{canon_name} queue", f"{canon_name.title()} Queue", f"{canon_name.capitalize()} Queue"):
+                    if variant != canon_name:
+                        lconn.execute("DELETE FROM queue_alert_limits WHERE LOWER(queue_name) = LOWER(?)", (variant,))
+                lconn.commit()
         except Exception:
             pass
 
-    return {"queue_name": name, "limit_people": limit_value, "updated_at": stamp}
+    return {"queue_name": raw_name, "limit_people": limit_value, "updated_at": stamp}
 
 
 try:

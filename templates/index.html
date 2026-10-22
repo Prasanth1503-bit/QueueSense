@@ -747,6 +747,21 @@
       window.attendanceSearchTimer = setTimeout(() => loadAttendance(true), 250);
     });
 
+    // Video stream resync to guarantee zero delay / no buffered playback
+    const liveStreamImg = document.getElementById("live-video-stream");
+    if (liveStreamImg) {
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+          liveStreamImg.src = "{{ url_for('video_feed') }}?t=" + Date.now();
+        }
+      });
+      liveStreamImg.onerror = () => {
+        setTimeout(() => {
+          liveStreamImg.src = "{{ url_for('video_feed') }}?t=" + Date.now();
+        }, 1000);
+      };
+    }
+
     // Initial loads
     loadAlertLimits();
     loadAttendance(true);

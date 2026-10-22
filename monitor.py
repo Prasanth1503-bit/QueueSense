@@ -72,13 +72,16 @@ def async_db_worker():
 threading.Thread(target=async_db_worker, daemon=True).start()
 
 
-# Asynchronous non-blocking worker for local disk frame writing (runs fast at 25-30 FPS)
+from shared_frame import write_live_frame
+
+# Asynchronous non-blocking workers for shared RAM buffer, local disk, and cloud frame uploads
 frame_sync_queue = queue.Queue(maxsize=1)
 cloud_frame_queue = queue.Queue(maxsize=1)
 
 
 def async_frame_worker():
     last_cloud_dispatch = 0.0
+    last_disk_dispatch = 0.0
     while True:
         try:
             frame_img = frame_sync_queue.get()
@@ -99,14 +102,21 @@ def async_frame_worker():
 
             if encoded_ok:
                 frame_bytes = encoded_frame.tobytes()
-                # Fast direct write to avoid Windows file rename locking
-                try:
-                    with open(LIVE_FRAME_PATH, "wb") as f:
-                        f.write(frame_bytes)
-                except (PermissionError, OSError):
-                    pass
 
-                # Dispatch to separate cloud worker (every 0.5s, non-blocking)
+                # 1. Zero-lock ultra-fast shared memory RAM push (30 FPS, zero disk/network latency)
+                write_live_frame(frame_bytes)
+
+                # 2. Disk backup for standalone file access (throttled to 1s to prevent NTFS lock contention)
+                now_d = time.monotonic()
+                if now_d - last_disk_dispatch >= 1.0:
+                    last_disk_dispatch = now_d
+                    try:
+                        with open(LIVE_FRAME_PATH, "wb") as f:
+                            f.write(frame_bytes)
+                    except (PermissionError, OSError):
+                        pass
+
+                # 3. Dispatch to separate cloud worker (every 0.5s, non-blocking)
                 now_c = time.monotonic()
                 if now_c - last_cloud_dispatch >= 0.5:
                     last_cloud_dispatch = now_c
@@ -1138,9 +1148,9 @@ try:
             2
         )
 
-        # Dispatch the frame to the background worker (smooth 25 FPS cap, zero disk/network stalls on video loop).
+        # Dispatch the frame to the background worker (smooth 30 FPS, zero stalls on video loop).
         now_ts = time.monotonic()
-        if now_ts - last_dashboard_frame_time >= 0.04:
+        if now_ts - last_dashboard_frame_time >= 0.033:
             last_dashboard_frame_time = now_ts
             if not frame_sync_queue.empty():
                 try:

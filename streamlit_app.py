@@ -30,6 +30,7 @@ from database import (
     save_attendance_event,
     normalize_queue_name
 )
+from shared_frame import read_live_frame
 
 # Optional hardware bridge import (if running on a machine with serial)
 try:
@@ -192,13 +193,45 @@ st.markdown("""
         opacity: 1 !important;
         filter: none !important;
         transition: none !important;
+        animation: none !important;
     }
     
-    /* Hide running widget spinner to stop visual blinking */
+    /* Complete suppression of running spinners, top loading bars, and DOM flicker */
+    .stApp[data-test-script-state="running"],
+    .stApp[data-test-script-state="running"] [data-testid="stMainBlockContainer"],
+    .stApp[data-test-script-state="running"] .main,
+    .stApp[data-test-script-state="running"] header,
+    [data-test-script-state="running"],
+    [data-test-script-state="running"] * {
+        opacity: 1 !important;
+        filter: none !important;
+        transition: none !important;
+        animation: none !important;
+    }
+    
+    /* Hide the top colored decoration bar that pulses/flashes on rerun */
+    [data-testid="stDecoration"],
+    .stDecoration,
+    div[data-testid="stDecoration"],
     div[data-testid="stStatusWidget"],
-    .stStatusWidget {
+    .stStatusWidget,
+    [data-testid="stToolbar"],
+    div[data-testid="stToolbar"],
+    .stDeployButton,
+    #MainMenu {
         display: none !important;
         visibility: hidden !important;
+        height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        background: transparent !important;
+    }
+    
+    header[data-testid="stHeader"],
+    [data-testid="stHeader"],
+    .stHeader {
+        background: transparent !important;
+        display: none !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -336,9 +369,9 @@ def fetch_live_queues():
 
 
 # ==============================================================================
-# TAB 1: OVERVIEW (Isolated 1.0s Fragment — Real-Time Live Metrics)
+# TAB 1: OVERVIEW (Isolated 1.5s Fragment — Real-Time Live Metrics)
 # ==============================================================================
-@st.fragment(run_every=1.0)
+@st.fragment(run_every=1.5)
 def render_overview_fragment():
     queues, limits, attendance_summary, shortest_queue, shortest_wait = fetch_live_queues()
 
@@ -422,6 +455,9 @@ def render_overview_fragment():
                 color = q_data.get("status_color", "green")
                 badge_class = "badge-normal" if color == "green" else ("badge-warning" if color == "yellow" else "badge-danger")
                 card_class = f"queue-card-{color}"
+                ratio = min(1.0, max(0.0, occ / max(1, lim)))
+                pct = int(ratio * 100)
+                bar_color = "#34d399" if color == "green" else ("#fbbf24" if color == "yellow" else "#f87171")
 
                 st.markdown(f"""
                 <div class="{card_class}">
@@ -437,10 +473,17 @@ def render_overview_fragment():
                         <div>⏱️ Est. Wait: <strong>{q_data.get('estimated_wait_seconds', 0)}s</strong></div>
                         <div>↙ Entries: <strong>{q_data.get('entries', 0)}</strong> · ↗ Exits: <strong>{q_data.get('exits', 0)}</strong></div>
                     </div>
+                    <div style="margin-top: 14px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: #94a3b8; margin-bottom: 4px;">
+                            <span>Capacity Utilization</span>
+                            <span style="font-weight: 700; color: #f8fafc;">{pct}%</span>
+                        </div>
+                        <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 999px; overflow: hidden;">
+                            <div style="width: {pct}%; height: 100%; background: {bar_color}; border-radius: 999px; transition: width 0.3s ease;"></div>
+                        </div>
+                    </div>
                 </div>
                 """, unsafe_allow_html=True)
-                ratio = min(1.0, max(0.0, occ / max(1, lim)))
-                st.progress(ratio)
     else:
         st.markdown("""
         <div style="background: rgba(255,255,255,0.03); border: 1px dashed rgba(255,255,255,0.15); border-radius: 12px; padding: 30px; text-align: center; color: #94a3b8;">
@@ -456,16 +499,34 @@ def render_overview_fragment():
     st.markdown("### 🪪 Recent RFID Attendance Activity")
     recent_events = get_attendance_events(limit=5)
     if recent_events:
-        rec_display = []
-        for ev in recent_events:
-            rec_display.append({
-                "Timestamp": ev.get("event_time", "") or "—",
-                "Student Name": ev.get("student_name") or "Unknown",
-                "Roll Number": ev.get("roll_number") or "—",
-                "Card UID": ev.get("card_uid") or "—",
-                "Action": ev.get("event_type") or "—"
-            })
-        st.dataframe(pd.DataFrame(rec_display), use_container_width=True, hide_index=True)
+        table_rows = "".join(f"""
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.06);">
+            <td style="padding: 10px 12px; color: #94a3b8; font-size: 0.82rem; font-family: monospace;">{ev.get('event_time', '—') or '—'}</td>
+            <td style="padding: 10px 12px; font-weight: 600; color: #f8fafc; font-size: 0.88rem;">{ev.get('student_name') or 'Unknown'}</td>
+            <td style="padding: 10px 12px; color: #38bdf8; font-family: monospace; font-size: 0.85rem;">{ev.get('roll_number') or '—'}</td>
+            <td style="padding: 10px 12px; color: #64748b; font-family: monospace; font-size: 0.8rem;">{ev.get('card_uid') or '—'}</td>
+            <td style="padding: 10px 12px;"><span style="background: {'rgba(34,197,94,0.15)' if ev.get('event_type') == 'ENTRY' else 'rgba(239,68,68,0.15)'}; color: {'#4ade80' if ev.get('event_type') == 'ENTRY' else '#f87171'}; border: 1px solid {'rgba(34,197,94,0.3)' if ev.get('event_type') == 'ENTRY' else 'rgba(239,68,68,0.3)'}; padding: 3px 8px; border-radius: 6px; font-size: 0.75rem; font-weight: 700;">{ev.get('event_type') or '—'}</span></td>
+        </tr>
+        """ for ev in recent_events)
+
+        st.markdown(f"""
+        <div style="background: rgba(15, 23, 42, 0.6); border: 1px solid rgba(140, 163, 197, 0.15); border-radius: 10px; overflow: hidden; margin-top: 8px;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead>
+                    <tr style="background: rgba(255,255,255,0.03); border-bottom: 1px solid rgba(255,255,255,0.1); color: #94a3b8; font-size: 0.75rem; text-transform: uppercase;">
+                        <th style="padding: 10px 12px;">Timestamp</th>
+                        <th style="padding: 10px 12px;">Student Name</th>
+                        <th style="padding: 10px 12px;">Roll Number</th>
+                        <th style="padding: 10px 12px;">Card UID</th>
+                        <th style="padding: 10px 12px;">Event</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {table_rows}
+                </tbody>
+            </table>
+        </div>
+        """, unsafe_allow_html=True)
     else:
         st.caption("No RFID cards scanned yet. Scan card on RFID reader to see live entries and exits.")
 
@@ -476,7 +537,7 @@ with tab_overview:
 # ==============================================================================
 # TAB 2: LIVE CAMERA FEED (Direct 30 FPS Stream + Cloud Synced Mode)
 # ==============================================================================
-@st.fragment(run_every=0.8)
+@st.fragment(run_every=1.5)
 def render_cloud_camera_fragment():
     col_v1, col_v2 = st.columns([3, 1])
 
@@ -484,8 +545,15 @@ def render_cloud_camera_fragment():
     cloud_ts = None
     with col_v1:
         frame_rendered = False
-        # 1. Try reading local file bytes directly
-        if LIVE_FRAME_PATH.exists():
+        # 1. Try reading zero-copy shared memory RAM buffer first (< 0.01ms)
+        shm_res = read_live_frame(max_age_seconds=2.5)
+        if shm_res is not None:
+            fid, ts, shm_bytes = shm_res
+            st.image(shm_bytes, caption=f"Local Zero-Copy RAM Stream · {datetime.fromtimestamp(ts).strftime('%H:%M:%S')}", use_container_width=True)
+            frame_rendered = True
+
+        # 2. Try reading local file bytes directly
+        if not frame_rendered and LIVE_FRAME_PATH.exists():
             try:
                 local_bytes = LIVE_FRAME_PATH.read_bytes()
                 if len(local_bytes) > 10 and local_bytes.startswith(b"\xff\xd8"):
@@ -495,7 +563,7 @@ def render_cloud_camera_fragment():
             except Exception:
                 pass
 
-        # 2. Fall back to cloud frame from Supabase
+        # 3. Fall back to cloud frame from Supabase
         if not frame_rendered:
             cloud_bytes, cloud_ts = get_live_frame()
             if cloud_bytes and len(cloud_bytes) > 10:
@@ -656,7 +724,7 @@ with tab_video:
         <script>
           const host = window.location.hostname || "localhost";
           const mjpegUrl = "http://" + host + ":5000/video_feed";
-          const staticUrl = "/app/static/live_frame.jpg";
+          const staticUrl = "http://" + host + ":5000/api/live-frame";
           const img = document.getElementById("stream-img");
           const dot = document.getElementById("hud-dot");
           const text = document.getElementById("hud-text");
@@ -705,6 +773,13 @@ with tab_video:
               setStatus("live", "30 FPS Direct Live Feed");
             }
           };
+
+          // Auto-resync when returning to the tab so video never lags behind
+          document.addEventListener("visibilitychange", () => {
+            if (!document.hidden) {
+              startMjpeg();
+            }
+          });
 
           img.onerror = () => {
             clearTimeout(connectionTimeout);
@@ -767,9 +842,9 @@ with tab_video:
 
 
 # ==============================================================================
-# TAB 3: RFID ATTENDANCE (Isolated 1.0s Fragment — Instant Real-Time Updates)
+# TAB 3: RFID ATTENDANCE (Isolated 2.5s Fragment — Instant Real-Time Updates)
 # ==============================================================================
-@st.fragment(run_every=1.0)
+@st.fragment(run_every=2.5)
 def render_attendance_fragment():
     st.markdown("### 🪪 Student RFID Attendance Records")
     
@@ -837,7 +912,7 @@ with tab_attendance:
 # ==============================================================================
 # TAB 4: HARDWARE ALERTS
 # ==============================================================================
-@st.fragment(run_every=2.0)
+@st.fragment(run_every=3.0)
 def render_limits_fragment():
     current_limits = get_queue_alert_limits()
     all_queue_names = ["student", "faculty", "scholar"]

@@ -254,6 +254,7 @@ def create_standby_frame():
 
 
 import threading
+from shared_frame import read_live_frame
 
 _latest_frame_data = {
     "bytes": None,
@@ -263,85 +264,125 @@ _latest_frame_data = {
 _frame_lock = threading.Lock()
 
 
+@app.route("/api/frame-push", methods=["POST"])
+def receive_frame_push():
+    """Accept real-time in-memory frame push from remote monitor.py (fallback)."""
+    f_bytes = request.get_data()
+    if f_bytes and len(f_bytes) > 10 and f_bytes.startswith(b"\xff\xd8"):
+        now_sec = time.time()
+        with _frame_lock:
+            _latest_frame_data["bytes"] = f_bytes
+            _latest_frame_data["mtime"] = int(now_sec * 1000000)
+            _latest_frame_data["timestamp"] = now_sec
+    return "", 204
+
+
 def _frame_reader_loop():
-    """Background reader that keeps live_frame.jpg mirrored in RAM.
-    Eliminates all disk contention and delivers perfectly synchronized 30 FPS frames to all clients."""
+    """Background fallback reader for cloud/disk frames when shared RAM buffer is idle."""
     last_mtime = 0
     standby = create_standby_frame()
     while True:
         try:
-            now_sec = time.time()
-            if LIVE_FRAME_PATH.exists():
-                try:
-                    stat = LIVE_FRAME_PATH.stat()
-                    mtime = stat.st_mtime_ns
-                    file_age = now_sec - stat.st_mtime
-                except (FileNotFoundError, PermissionError):
-                    mtime = None
-                    file_age = 999.0
+            # If shared memory has live frames (< 2s old), skip disk/cloud polling entirely
+            shm_live = read_live_frame(max_age_seconds=2.0)
+            if shm_live is not None:
+                time.sleep(0.5)
+                continue
 
-                if file_age <= 3.0:
-                    if mtime is not None and mtime != last_mtime:
-                        try:
-                            with open(LIVE_FRAME_PATH, "rb") as f:
-                                data = f.read()
-                            if data and len(data) > 4 and data.startswith(b"\xff\xd8"):
-                                last_mtime = mtime
-                                with _frame_lock:
-                                    _latest_frame_data["bytes"] = data
-                                    _latest_frame_data["mtime"] = mtime
-                                    _latest_frame_data["timestamp"] = now_sec
-                        except (PermissionError, OSError):
-                            pass
+            now_sec = time.time()
+            with _frame_lock:
+                ram_age = now_sec - _latest_frame_data["timestamp"]
+            if ram_age > 1.5:
+                if LIVE_FRAME_PATH.exists():
+                    try:
+                        stat = LIVE_FRAME_PATH.stat()
+                        mtime = stat.st_mtime_ns
+                        file_age = now_sec - stat.st_mtime
+                    except (FileNotFoundError, PermissionError):
+                        mtime = None
+                        file_age = 999.0
+
+                    if file_age <= 4.0:
+                        if mtime is not None and mtime != last_mtime:
+                            try:
+                                with open(LIVE_FRAME_PATH, "rb") as f:
+                                    data = f.read()
+                                if data and len(data) > 4 and data.startswith(b"\xff\xd8"):
+                                    last_mtime = mtime
+                                    with _frame_lock:
+                                        _latest_frame_data["bytes"] = data
+                                        _latest_frame_data["mtime"] = mtime
+                                        _latest_frame_data["timestamp"] = now_sec
+                            except (PermissionError, OSError):
+                                pass
+                    else:
+                        with _frame_lock:
+                            _latest_frame_data["bytes"] = standby
+                            _latest_frame_data["mtime"] = 0
                 else:
-                    with _frame_lock:
-                        _latest_frame_data["bytes"] = standby
-                        _latest_frame_data["mtime"] = 0
-                        _latest_frame_data["timestamp"] = now_sec
-            else:
-                c_bytes, _ = get_live_frame()
-                if c_bytes:
-                    with _frame_lock:
-                        _latest_frame_data["bytes"] = c_bytes
-                        _latest_frame_data["mtime"] = int(now_sec * 1000)
-                        _latest_frame_data["timestamp"] = now_sec
-                else:
-                    with _frame_lock:
-                        _latest_frame_data["bytes"] = standby
-                        _latest_frame_data["mtime"] = 0
-                        _latest_frame_data["timestamp"] = now_sec
+                    c_bytes, _ = get_live_frame()
+                    if c_bytes:
+                        with _frame_lock:
+                            _latest_frame_data["bytes"] = c_bytes
+                            _latest_frame_data["mtime"] = int(now_sec * 1000)
+                            _latest_frame_data["timestamp"] = now_sec
+                    else:
+                        with _frame_lock:
+                            _latest_frame_data["bytes"] = standby
+                            _latest_frame_data["mtime"] = 0
         except Exception:
             pass
-        time.sleep(0.015)
+        time.sleep(0.1)
 
 
 threading.Thread(target=_frame_reader_loop, daemon=True).start()
 
 
 def generate_video_stream():
-    client_last_mtime = None
+    client_last_id = -1
     standby_bytes = create_standby_frame()
+    last_yield_time = time.time()
 
     while True:
         try:
-            with _frame_lock:
-                frame_bytes = _latest_frame_data["bytes"] or standby_bytes
-                frame_mtime = _latest_frame_data["mtime"]
-
-            if frame_bytes and frame_mtime != client_last_mtime:
-                client_last_mtime = frame_mtime
+            # 1. Ultra-fast shared memory RAM buffer (30 FPS, < 0.01ms, zero lock)
+            shm_res = read_live_frame(min_frame_id=client_last_id, max_age_seconds=2.5)
+            if shm_res is not None:
+                fid, ts, frame_bytes = shm_res
+                client_last_id = fid
+                last_yield_time = time.time()
                 yield (
                     b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n"
-                    b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n"
-                    b"Cache-Control: no-cache\r\n\r\n"
+                    b"Content-Type: image/jpeg\r\n\r\n"
                     + frame_bytes + b"\r\n"
                 )
+            else:
+                # 2. Check in-memory fallback (from cloud/push)
+                now = time.time()
+                with _frame_lock:
+                    fb = _latest_frame_data["bytes"]
+                    mid = _latest_frame_data["mtime"]
+                if fb and mid != client_last_id:
+                    client_last_id = mid
+                    last_yield_time = now
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n"
+                        + fb + b"\r\n"
+                    )
+                elif (now - last_yield_time) > 2.5:
+                    # Stream standby frame if no feed active
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n"
+                        + standby_bytes + b"\r\n"
+                    )
+                    last_yield_time = now
         except (GeneratorExit, StopIteration):
             break
         except Exception:
             break
-        time.sleep(0.015)
+        time.sleep(0.005)
 
 
 @app.route("/video_feed")
@@ -352,6 +393,8 @@ def video_feed():
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
+            "Expires": "0",
+            "Access-Control-Allow-Origin": "*",
             "X-Accel-Buffering": "no"
         }
     )
@@ -359,14 +402,20 @@ def video_feed():
 
 @app.route("/api/live-frame")
 def api_live_frame():
-    with _frame_lock:
-        frame_bytes = _latest_frame_data["bytes"] or create_standby_frame()
+    shm_res = read_live_frame(max_age_seconds=2.5)
+    if shm_res is not None:
+        frame_bytes = shm_res[2]
+    else:
+        with _frame_lock:
+            frame_bytes = _latest_frame_data["bytes"] or create_standby_frame()
     return Response(
         frame_bytes,
         mimetype="image/jpeg",
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache"
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "Access-Control-Allow-Origin": "*"
         }
     )
 

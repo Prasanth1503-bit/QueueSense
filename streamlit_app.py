@@ -46,6 +46,32 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Automatically ensure local Flask stream server is active on port 5000 for 30 FPS video
+import socket
+import threading
+
+def _is_port_in_use(port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.2)
+            return s.connect_ex(("127.0.0.1", port)) == 0
+    except Exception:
+        return False
+
+def _ensure_flask_stream_server():
+    if not _is_port_in_use(5000):
+        def _run():
+            try:
+                import app
+                app.app.run(host="0.0.0.0", port=5000, threaded=True, use_reloader=False)
+            except Exception:
+                pass
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        time.sleep(0.3)
+
+_ensure_flask_stream_server()
+
 # Custom Styling (Dark Neon Aesthetics + Total Dimming Suppression)
 st.markdown("""
 <style>
@@ -537,7 +563,7 @@ with tab_overview:
 # ==============================================================================
 # TAB 2: LIVE CAMERA FEED (Direct 30 FPS Stream + Cloud Synced Mode)
 # ==============================================================================
-@st.fragment(run_every=1.5)
+@st.fragment(run_every=0.5)
 def render_cloud_camera_fragment():
     col_v1, col_v2 = st.columns([3, 1])
 
@@ -722,78 +748,41 @@ with tab_video:
         </div>
 
         <script>
-          const host = window.location.hostname || "localhost";
+          const host = window.location.hostname || "127.0.0.1";
           const mjpegUrl = "http://" + host + ":5000/video_feed";
-          const staticUrl = "http://" + host + ":5000/api/live-frame";
           const img = document.getElementById("stream-img");
           const dot = document.getElementById("hud-dot");
           const text = document.getElementById("hud-text");
           const standby = document.getElementById("standby-card");
 
-          let isFetching = false;
-          let consecutiveErrors = 0;
-          let loopTimer = null;
-
-          function setStatus(status, label) {
-            if (status === "live") {
-              dot.className = "dot";
-              text.textContent = label || "30 FPS Direct Live Feed";
-              img.style.display = "block";
-              standby.style.display = "none";
-            } else {
-              dot.className = "dot red";
-              text.textContent = label || "Stream Standby";
-              img.style.display = "none";
-              standby.style.display = "block";
-            }
+          function setLive() {
+            dot.className = "dot";
+            text.textContent = "30 FPS Direct Live Feed (Zero Lag)";
+            img.style.display = "block";
+            standby.style.display = "none";
           }
 
-          function startDirectFeed() {
-            if (loopTimer) clearTimeout(loopTimer);
+          function setError() {
+            dot.className = "dot red";
+            text.textContent = "Stream Standby - Waiting for monitor.py";
+            img.style.display = "none";
+            standby.style.display = "block";
+          }
 
-            const fetchNext = () => {
-              if (document.hidden) {
-                loopTimer = setTimeout(fetchNext, 100);
-                return;
-              }
-              if (isFetching) {
-                loopTimer = setTimeout(fetchNext, 25);
-                return;
-              }
-              isFetching = true;
-              const testImg = new Image();
-              testImg.onload = () => {
-                img.src = testImg.src;
-                setStatus("live", "30 FPS Direct Live Feed (Zero Lag)");
-                isFetching = false;
-                consecutiveErrors = 0;
-                loopTimer = setTimeout(fetchNext, 25);
-              };
-              testImg.onerror = () => {
-                isFetching = false;
-                consecutiveErrors++;
-                if (consecutiveErrors >= 3) {
-                  setStatus("error", "Waiting for monitor.py");
-                }
-                loopTimer = setTimeout(fetchNext, 300);
-              };
-              testImg.src = staticUrl + "?t=" + Date.now();
+          function connectStream() {
+            img.onload = setLive;
+            img.onerror = () => {
+              setError();
+              setTimeout(() => {
+                img.src = mjpegUrl + "?t=" + Date.now();
+              }, 2000);
             };
-
-            fetchNext();
+            img.src = mjpegUrl;
           }
 
           function forceReconnect() {
-            consecutiveErrors = 0;
-            startDirectFeed();
+            img.src = mjpegUrl + "?t=" + Date.now();
           }
-
-          document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) {
-              isFetching = false;
-              startDirectFeed();
-            }
-          });
 
           function toggleFullscreen() {
             const el = document.getElementById("player-container");
@@ -806,7 +795,7 @@ with tab_video:
           }
 
           // Start stream
-          startDirectFeed();
+          connectStream();
         </script>
         </body>
         </html>

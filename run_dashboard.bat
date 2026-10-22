@@ -40,6 +40,9 @@ echo Starting Streamlit Dashboard on http://localhost:8501...
 goto end
 
 :start_streamlit
+echo Starting Local Flask Web Server in background for 30 FPS streaming...
+start "QueueSense Flask Server" /min %PYTHON_EXE% app.py
+timeout /t 2 >nul
 echo Starting Streamlit Dashboard on http://localhost:8501...
 %STREAMLIT_EXE% run streamlit_app.py
 goto end

@@ -206,7 +206,53 @@ def detect_available_cameras(max_index=5):
             cap_test.release()
         except Exception:
             pass
-    return available
+class ThreadedCamera:
+    """Reads camera frames in a dedicated daemon thread to completely eliminate driver buffer lag on battery power."""
+    def __init__(self, capture):
+        self.cap = capture
+        self.lock = threading.Lock()
+        self.frame = None
+        self.ret = False
+        self.running = True
+        self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self.thread.start()
+
+    def _capture_loop(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            if ret and frame is not None:
+                with self.lock:
+                    self.ret = ret
+                    self.frame = frame
+            else:
+                time.sleep(0.005)
+
+    def read(self):
+        with self.lock:
+            if self.frame is None:
+                ok, f = self.cap.read()
+                if ok and f is not None:
+                    self.frame = f
+                    self.ret = ok
+                    return ok, f.copy()
+                return False, None
+            return self.ret, self.frame.copy()
+
+    def isOpened(self):
+        return self.cap.isOpened()
+
+    def get(self, propId):
+        return self.cap.get(propId)
+
+    def set(self, propId, value):
+        return self.cap.set(propId, value)
+
+    def release(self):
+        self.running = False
+        try:
+            self.cap.release()
+        except Exception:
+            pass
 
 
 # ============================================
@@ -374,6 +420,9 @@ print(f"====================================")
 # ============================================
 # STEP 2: OPEN VIDEO / CAMERA FIRST FRAME
 # ============================================
+
+if is_live_camera:
+    cap = ThreadedCamera(cap)
 
 success, first_frame = cap.read()
 
@@ -790,18 +839,22 @@ print("\nAll queue regions have been saved.")
 # ============================================
 
 if torch.cuda.is_available():
-
     device = 0
-
+    try:
+        torch.backends.cudnn.benchmark = True
+    except Exception:
+        pass
     print(
         "\nUsing GPU:",
         torch.cuda.get_device_name(0)
     )
-
 else:
-
     device = "cpu"
-
+    try:
+        import os
+        torch.set_num_threads(min(4, os.cpu_count() or 4))
+    except Exception:
+        pass
     print(
         "\nCUDA unavailable. Using CPU."
     )
@@ -896,7 +949,7 @@ try:
 
         now = time.monotonic()
 
-        # Detect and track people using YOLO + ByteTrack (optimized 480px for high-FPS performance).
+        # Detect and track people using YOLO + ByteTrack (optimized 416px for live camera).
         results = model.track(
             source=frame,
             persist=True,
@@ -904,7 +957,7 @@ try:
             classes=[0],
             conf=0.25,
             iou=0.45,
-            imgsz=480,
+            imgsz=416 if is_live_camera else 480,
             device=device,
             verbose=False
         )
@@ -1176,6 +1229,11 @@ try:
         frame_duration = time.monotonic() - frame_start
         if not is_live_camera:
             wait_time = max(1, int((target_frame_interval - frame_duration) * 1000))
+            if frame_duration > target_frame_interval * 1.4:
+                try:
+                    cap.grab()
+                except Exception:
+                    pass
         else:
             wait_time = 1
 

@@ -15,7 +15,8 @@ from database import (get_queue_statistics, get_attendance_events, get_attendanc
                       get_queue_alert_limits, save_queue_alert_limit,
                       get_queue_history, get_queue_history_summary,
                       get_historical_videos, get_historical_queue_names,
-                      get_live_frame, get_hardware_status, save_attendance_event)
+                      get_live_frame, get_hardware_status, save_attendance_event,
+                      is_postgres)
 from arduino_queue_bridge import bridge
 
 app = Flask(__name__)
@@ -320,12 +321,17 @@ def _frame_reader_loop():
                             _latest_frame_data["bytes"] = standby
                             _latest_frame_data["mtime"] = 0
                 else:
-                    c_bytes, _ = get_live_frame()
-                    if c_bytes:
-                        with _frame_lock:
-                            _latest_frame_data["bytes"] = c_bytes
-                            _latest_frame_data["mtime"] = int(now_sec * 1000)
-                            _latest_frame_data["timestamp"] = now_sec
+                    if is_postgres():
+                        c_bytes, _ = get_live_frame()
+                        if c_bytes:
+                            with _frame_lock:
+                                _latest_frame_data["bytes"] = c_bytes
+                                _latest_frame_data["mtime"] = int(now_sec * 1000)
+                                _latest_frame_data["timestamp"] = now_sec
+                        else:
+                            with _frame_lock:
+                                _latest_frame_data["bytes"] = standby
+                                _latest_frame_data["mtime"] = 0
                     else:
                         with _frame_lock:
                             _latest_frame_data["bytes"] = standby
@@ -353,11 +359,12 @@ def generate_video_stream():
                 last_yield_time = time.time()
                 yield (
                     b"--frame\r\n"
-                    b"Content-Type: image/jpeg\r\n\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n\r\n"
                     + frame_bytes + b"\r\n"
                 )
             else:
-                # 2. Check in-memory fallback (from cloud/push)
+                # 2. Check in-memory fallback (from disk/push)
                 now = time.time()
                 with _frame_lock:
                     fb = _latest_frame_data["bytes"]
@@ -367,14 +374,16 @@ def generate_video_stream():
                     last_yield_time = now
                     yield (
                         b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n"
                         + fb + b"\r\n"
                     )
                 elif (now - last_yield_time) > 2.5:
                     # Stream standby frame if no feed active
                     yield (
                         b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n\r\n"
+                        b"Content-Type: image/jpeg\r\n"
+                        b"Content-Length: " + str(len(standby_bytes)).encode() + b"\r\n\r\n"
                         + standby_bytes + b"\r\n"
                     )
                     last_yield_time = now
@@ -382,7 +391,7 @@ def generate_video_stream():
             break
         except Exception:
             break
-        time.sleep(0.005)
+        time.sleep(0.01)
 
 
 @app.route("/video_feed")

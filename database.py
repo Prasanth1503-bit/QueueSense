@@ -90,7 +90,7 @@ def get_pg_pool():
                 except Exception as exc:
                     _last_pg_error = str(exc)
                     _pg_offline = True
-                    _pg_offline_until = time.monotonic() + 120.0
+                    _pg_offline_until = time.monotonic() + 3600.0
                     return None
     return _pg_pool
 
@@ -210,10 +210,10 @@ def get_connection():
             except Exception as exc:
                 _last_pg_error = str(exc)
                 _pg_offline = True
-                _pg_offline_until = time.monotonic() + 120.0
+                _pg_offline_until = time.monotonic() + 3600.0
         else:
             _pg_offline = True
-            _pg_offline_until = time.monotonic() + 120.0
+            _pg_offline_until = time.monotonic() + 3600.0
 
     conn = sqlite3.connect(str(DATABASE_PATH), timeout=10)
     conn.row_factory = sqlite3.Row
@@ -897,6 +897,8 @@ def get_system_state(key, max_age_seconds=None):
 
 def update_live_frame(frame_bytes):
     """Save latest video frame thumbnail (JPEG bytes encoded to base64) to database for cloud preview."""
+    if not is_postgres():
+        return
     import base64
     b64_str = base64.b64encode(frame_bytes).decode("ascii")
     set_system_state("live_frame", b64_str)

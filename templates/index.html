@@ -92,7 +92,7 @@
             <span class="live-badge"><span class="live-dot"></span> LIVE</span>
           </div>
           <div class="video-frame">
-            <img id="live-video-stream" src="/api/live-frame" alt="Live YOLO queue monitoring feed" class="live-video">
+            <img id="live-video-stream" src="{{ url_for('video_feed') }}" alt="Live YOLO queue monitoring feed" class="live-video">
           </div>
           <div class="video-footer">
             <span><i class="legend-box detection"></i> Person detection</span>
@@ -747,34 +747,17 @@
       window.attendanceSearchTimer = setTimeout(() => loadAttendance(true), 250);
     });
 
-    // High-speed non-buffering live video stream (< 2ms latency, zero lag)
+    // Dedicated live video stream resync to ensure zero delay and zero polling overhead
     const liveStreamImg = document.getElementById("live-video-stream");
     if (liveStreamImg) {
-      let isFrameFetching = false;
-      function fetchNextStreamFrame() {
-        if (isFrameFetching || document.hidden) {
-          setTimeout(fetchNextStreamFrame, 30);
-          return;
-        }
-        isFrameFetching = true;
-        const nextImg = new Image();
-        nextImg.onload = () => {
-          liveStreamImg.src = nextImg.src;
-          isFrameFetching = false;
-          setTimeout(fetchNextStreamFrame, 25);
-        };
-        nextImg.onerror = () => {
-          isFrameFetching = false;
-          setTimeout(fetchNextStreamFrame, 250);
-        };
-        nextImg.src = "/api/live-frame?t=" + Date.now();
-      }
-      fetchNextStreamFrame();
-
+      liveStreamImg.onerror = () => {
+        setTimeout(() => {
+          liveStreamImg.src = "{{ url_for('video_feed') }}?t=" + Date.now();
+        }, 1000);
+      };
       document.addEventListener("visibilitychange", () => {
         if (!document.hidden) {
-          isFrameFetching = false;
-          fetchNextStreamFrame();
+          liveStreamImg.src = "{{ url_for('video_feed') }}?t=" + Date.now();
         }
       });
     }

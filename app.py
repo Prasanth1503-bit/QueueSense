@@ -284,8 +284,8 @@ def _frame_reader_loop():
     standby = create_standby_frame()
     while True:
         try:
-            # If shared memory has live frames (< 2s old), skip disk/cloud polling entirely
-            shm_live = read_live_frame(max_age_seconds=2.0)
+            # If shared memory has live frames (< 4s old), skip disk/cloud polling entirely
+            shm_live = read_live_frame(max_age_seconds=4.0)
             if shm_live is not None:
                 time.sleep(0.5)
                 continue
@@ -347,46 +347,53 @@ threading.Thread(target=_frame_reader_loop, daemon=True).start()
 def generate_video_stream():
     client_last_id = -1
     standby_bytes = create_standby_frame()
-    last_yield_time = time.time()
+    last_yield_time = 0.0
 
     while True:
         try:
+            now = time.time()
             # 1. Ultra-fast shared memory RAM buffer (30 FPS, < 0.01ms, zero lock)
-            shm_res = read_live_frame(min_frame_id=client_last_id, max_age_seconds=6.0)
+            shm_res = read_live_frame(min_frame_id=client_last_id, max_age_seconds=4.0)
             if shm_res is not None:
                 fid, ts, frame_bytes = shm_res
                 client_last_id = fid
-                last_yield_time = time.time()
+                last_yield_time = now
                 yield (
                     b"--frame\r\n"
                     b"Content-Type: image/jpeg\r\n"
                     b"Content-Length: " + str(len(frame_bytes)).encode() + b"\r\n\r\n"
                     + frame_bytes + b"\r\n"
                 )
-            else:
-                # 2. Check in-memory fallback (from disk/push)
-                now = time.time()
-                with _frame_lock:
-                    fb = _latest_frame_data["bytes"]
-                    mid = _latest_frame_data["mtime"]
-                if fb and mid != client_last_id:
-                    client_last_id = mid
-                    last_yield_time = now
-                    yield (
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n"
-                        b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n"
-                        + fb + b"\r\n"
-                    )
-                elif (now - last_yield_time) > 6.0:
-                    # Stream standby frame if no feed active
-                    yield (
-                        b"--frame\r\n"
-                        b"Content-Type: image/jpeg\r\n"
-                        b"Content-Length: " + str(len(standby_bytes)).encode() + b"\r\n\r\n"
-                        + standby_bytes + b"\r\n"
-                    )
-                    last_yield_time = now
+                time.sleep(0.01)
+                continue
+
+            # 2. Check in-memory fallback (from disk/push) only if shared memory is not active
+            with _frame_lock:
+                fb = _latest_frame_data["bytes"]
+                mid = _latest_frame_data["mtime"]
+                ftime = _latest_frame_data["timestamp"]
+            if fb and mid != 0 and mid != client_last_id and (now - ftime) < 4.0:
+                client_last_id = mid
+                last_yield_time = now
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(fb)).encode() + b"\r\n\r\n"
+                    + fb + b"\r\n"
+                )
+                time.sleep(0.01)
+                continue
+
+            # 3. Only if feed is completely idle for > 3.0s, yield standby frame periodically
+            if (now - last_yield_time) > 3.0:
+                yield (
+                    b"--frame\r\n"
+                    b"Content-Type: image/jpeg\r\n"
+                    b"Content-Length: " + str(len(standby_bytes)).encode() + b"\r\n\r\n"
+                    + standby_bytes + b"\r\n"
+                )
+                last_yield_time = now
+
         except (GeneratorExit, StopIteration):
             break
         except Exception:

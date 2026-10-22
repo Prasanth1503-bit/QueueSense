@@ -54,10 +54,15 @@ def write_live_frame(frame_bytes: bytes) -> int:
         now_ts = time.time()
         header = struct.pack(HEADER_FMT, MAGIC, 1, flen, 0, _writer_frame_id, now_ts)
         try:
-            _writer_shm.buf[0:HEADER_SIZE] = header
+            # Write payload bytes first, then write header so reader never sees partial frame
             _writer_shm.buf[HEADER_SIZE:HEADER_SIZE + flen] = frame_bytes
+            _writer_shm.buf[0:HEADER_SIZE] = header
         except Exception:
-            pass
+            try:
+                _writer_shm.close()
+            except Exception:
+                pass
+            _writer_shm = None
 
         return _writer_frame_id
 
@@ -93,6 +98,12 @@ def read_live_frame(min_frame_id: int = -1, max_age_seconds: float = 3.0) -> Opt
             frame_data = bytes(_reader_shm.buf[HEADER_SIZE:HEADER_SIZE + flen])
             return fid, ts, frame_data
         except Exception:
+            try:
+                if _reader_shm is not None:
+                    _reader_shm.close()
+            except Exception:
+                pass
+            _reader_shm = None
             return None
 
 
@@ -102,7 +113,6 @@ def cleanup_shared_frame():
         if _writer_shm is not None:
             try:
                 _writer_shm.close()
-                _writer_shm.unlink()
             except Exception:
                 pass
             _writer_shm = None
@@ -117,3 +127,4 @@ def cleanup_shared_frame():
 
 
 atexit.register(cleanup_shared_frame)
+

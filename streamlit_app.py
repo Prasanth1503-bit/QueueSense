@@ -730,19 +730,14 @@ with tab_video:
           const text = document.getElementById("hud-text");
           const standby = document.getElementById("standby-card");
 
-          let mode = "mjpeg"; // "mjpeg" or "static_poll"
-          let pollTimer = null;
-          let connectionTimeout = null;
+          let isFetching = false;
+          let consecutiveErrors = 0;
+          let loopTimer = null;
 
           function setStatus(status, label) {
             if (status === "live") {
               dot.className = "dot";
               text.textContent = label || "30 FPS Direct Live Feed";
-              img.style.display = "block";
-              standby.style.display = "none";
-            } else if (status === "poll") {
-              dot.className = "dot yellow";
-              text.textContent = label || "⚡ Local Fast Buffer (25 FPS)";
               img.style.display = "block";
               standby.style.display = "none";
             } else {
@@ -753,72 +748,52 @@ with tab_video:
             }
           }
 
-          function startMjpeg() {
-            mode = "mjpeg";
-            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
-            img.src = mjpegUrl + "?t=" + Date.now();
-            setStatus("live", "Connecting to 30 FPS Stream…");
+          function startDirectFeed() {
+            if (loopTimer) clearTimeout(loopTimer);
 
-            clearTimeout(connectionTimeout);
-            connectionTimeout = setTimeout(() => {
-              if (mode === "mjpeg" && (!img.complete || img.naturalWidth === 0)) {
-                startStaticPoll();
-              }
-            }, 3000);
-          }
-
-          img.onload = () => {
-            clearTimeout(connectionTimeout);
-            if (mode === "mjpeg") {
-              setStatus("live", "30 FPS Direct Live Feed");
-            }
-          };
-
-          // Auto-resync when returning to the tab so video never lags behind
-          document.addEventListener("visibilitychange", () => {
-            if (!document.hidden) {
-              startMjpeg();
-            }
-          });
-
-          img.onerror = () => {
-            clearTimeout(connectionTimeout);
-            if (mode === "mjpeg") {
-              startStaticPoll();
-            } else {
-              setStatus("error", "Waiting for monitor.py");
-            }
-          };
-
-          function startStaticPoll() {
-            mode = "static_poll";
-            clearTimeout(connectionTimeout);
-            if (pollTimer) clearInterval(pollTimer);
-
-            let isFetching = false;
             const fetchNext = () => {
-              if (isFetching) return;
+              if (document.hidden) {
+                loopTimer = setTimeout(fetchNext, 100);
+                return;
+              }
+              if (isFetching) {
+                loopTimer = setTimeout(fetchNext, 25);
+                return;
+              }
               isFetching = true;
               const testImg = new Image();
               testImg.onload = () => {
                 img.src = testImg.src;
-                setStatus("poll", "⚡ Local Fast Buffer (25 FPS)");
+                setStatus("live", "30 FPS Direct Live Feed (Zero Lag)");
                 isFetching = false;
+                consecutiveErrors = 0;
+                loopTimer = setTimeout(fetchNext, 25);
               };
               testImg.onerror = () => {
                 isFetching = false;
-                setStatus("error", "Waiting for monitor.py");
+                consecutiveErrors++;
+                if (consecutiveErrors >= 3) {
+                  setStatus("error", "Waiting for monitor.py");
+                }
+                loopTimer = setTimeout(fetchNext, 300);
               };
               testImg.src = staticUrl + "?t=" + Date.now();
             };
 
             fetchNext();
-            pollTimer = setInterval(fetchNext, 40); // 25 FPS
           }
 
           function forceReconnect() {
-            startMjpeg();
+            consecutiveErrors = 0;
+            startDirectFeed();
           }
+
+          document.addEventListener("visibilitychange", () => {
+            if (!document.hidden) {
+              isFetching = false;
+              startDirectFeed();
+            }
+          });
 
           function toggleFullscreen() {
             const el = document.getElementById("player-container");
@@ -831,7 +806,7 @@ with tab_video:
           }
 
           // Start stream
-          startMjpeg();
+          startDirectFeed();
         </script>
         </body>
         </html>

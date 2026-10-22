@@ -407,7 +407,17 @@ def api_live_frame():
         frame_bytes = shm_res[2]
     else:
         with _frame_lock:
-            frame_bytes = _latest_frame_data["bytes"] or create_standby_frame()
+            frame_bytes = _latest_frame_data["bytes"]
+        if not frame_bytes and LIVE_FRAME_PATH.exists():
+            try:
+                data = LIVE_FRAME_PATH.read_bytes()
+                if len(data) > 10 and data.startswith(b"\xff\xd8"):
+                    frame_bytes = data
+            except Exception:
+                pass
+        if not frame_bytes:
+            frame_bytes = create_standby_frame()
+
     return Response(
         frame_bytes,
         mimetype="image/jpeg",
